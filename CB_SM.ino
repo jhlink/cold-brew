@@ -5,12 +5,12 @@
 #define VALV_CBR 6
 #define VALV_ATM 5
 #define PUMP	4
-#define BTN 3
-#define PRS_SEN 8
+#define BTN 2
+#define PRS_SEN 9
 
 // Different states of the machine: Idle, Vacuum, Dwell, and Drain
-enum states {IDLED, VACU, DWLL, DRIN};
-Adafruit_NeoPixel ledStat = Adafruit_NeoPixel(1, 2, NEO_GRB + NEO_KHZ800);
+enum states {IDLED=1, VACU=2, DWLL=3, DRIN=4};
+Adafruit_NeoPixel ledStat = Adafruit_NeoPixel(1, 3, NEO_GRB + NEO_KHZ800);
 unsigned long startTime;
 
 // Machine of various 'states' and updating method
@@ -19,12 +19,12 @@ class Machine
     public:
     // Class Member Variables
 	volatile int state;						// Current state of the machine
-	long vacDwlTime;    					// Time limit for Vacuum and Dwell state combined
+	unsigned long vacDwlTime;    					// Time limit for Vacuum and Dwell state combined
 	int updateInterval; 					// Update interval for checking for changed button state
  
  	// Constructor for Machine class
   	
-  	Machine(int startState, long setTime, int interval = 20)
+  	Machine(int startState, unsigned long setTime, int interval = 200)
   	{
 		state = startState;
   	  	vacDwlTime = setTime;
@@ -32,7 +32,7 @@ class Machine
   	}
 };
 
-Machine coffee(IDLED, 300000); 
+Machine coffee(IDLED, 30000); 
 volatile int* volatile ptr = &coffee.state;
 
 void setup() {
@@ -43,83 +43,100 @@ void setup() {
 	pinMode(VALV_ATM, OUTPUT);
 	pinMode(PUMP, OUTPUT);
 
-	pinMode(PRS_SEN, INPUT);
-	
+	pinMode(PRS_SEN, INPUT_PULLUP);
 	pinMode(BTN, INPUT_PULLUP);
-	attachInterrupt(BTN, changeState, FALLING);
+	attachInterrupt(0, changeState, FALLING);
 }
 
+long lastDebounceTime = 0;
+volatile int lastState;
 void changeState() {
-	switch (coffee.state)
-	{
-		case IDLED:
-			coffee.state = VACU;
-			//	IDLED -> Vacuum
-			break;
-		case VACU:
-			coffee.state = DRIN;
-			//	Vacuum -> Drain
-			break;
-		case DWLL:
-			coffee.state = DRIN;
-			//	Dwell -> Drain
-			break;
-		case DRIN:
-			coffee.state = IDLED;
-			//	Drain -> IDLED
-			break;
-		default:
-			break;
-	}
-	ptr = &coffee.state;
+    
+    if ((millis() - lastDebounceTime) > coffee.updateInterval) {    
+    	switch (coffee.state)
+    	{
+    		case IDLED:
+    			coffee.state = VACU;
+    			//	IDLED -> Vacuum
+    			break;
+    		case VACU:
+    			coffee.state = DRIN;
+    			//	Vacuum -> Drain
+    			break;
+    		case DWLL:
+//       			coffee.state = DRIN;
+    			//	Dwell -> Drain
+    			break;
+    		case DRIN:
+    			coffee.state = IDLED;
+    			//	Drain -> IDLED
+    			break;
+    	}
+        if (lastState == coffee.state) {
+            Serial.println("------");
+        } else {
+            ptr = &coffee.state;
+            lastState = coffee.state;
+        }
+        
+        lastDebounceTime = millis();
+    }
 }
 
 
 void loop() {
 	// Execute methods due to volatile state changes
-	
 
 	switch (*ptr)
 	{
 		case IDLED:
+            Serial.println("IDLE");
 			idled();
-			ptr = NULL;
 			break;
 
 		case VACU:
+            Serial.println("VACU");
 			vacuum();
-			ptr = NULL;
 			break;
 
 		case DWLL:
+            Serial.println("DWLL");
 			dwell();
-			ptr = NULL;
 			break;
 
 		case DRIN:
+            Serial.println("DRIN");
 			drain();
-			ptr = NULL;
 			break;
 	}
 
 	if ((*ptr == VACU || *ptr == DWLL) && (millis() - startTime) > coffee.vacDwlTime) {
+        Serial.println("----------------------------------------------");
 		coffee.state = DRIN;
-	} else if ((millis() - startTime) <= coffee.vacDwlTime && *ptr == VACU && digitalRead(PRS_SEN) == HIGH) {
+	} else if ((millis() - startTime) <= coffee.vacDwlTime && *ptr == VACU && digitalRead(PRS_SEN) == LOW) {
 		coffee.state = DWLL;
-	} else if ((millis() - startTime) <= coffee.vacDwlTime && *ptr == DWLL && digitalRead(PRS_SEN) == LOW) {
+	} else if ((millis() - startTime) <= coffee.vacDwlTime && *ptr == DWLL && digitalRead(PRS_SEN) == HIGH) {
 		coffee.state = VACU;
 	}
+
 }
 
 void idled() {
 	ledStat.clear();
+    digitalWrite(VALV_PUMP, LOW);
+    digitalWrite(VALV_CBR, LOW);
+    digitalWrite(VALV_ATM, LOW);
+    digitalWrite(PUMP, LOW);
 }
 
 void vacuum() {
 	startTime = millis();
 	digitalWrite(VALV_PUMP, HIGH);
-	ledStat.setPixelColor(0, ledStat.Color(255, 255,0));
 	digitalWrite(PUMP, HIGH);
+    digitalWrite(VALV_CBR, LOW);
+   
+    ledStat.setPixelColor(0, ledStat.Color(255, 255,0));
+    ledStat.show();
 }
 
 void dwell() {
@@ -128,14 +145,16 @@ void dwell() {
 	digitalWrite(VALV_CBR, HIGH);
 
     ledStat.setPixelColor(0, ledStat.Color(255, 0, 0));
+    ledStat.show();
 }
 
-void drain() {
+void drain() {  
 	digitalWrite(VALV_PUMP, LOW);
 	digitalWrite(VALV_CBR, LOW);
 	digitalWrite(VALV_ATM, HIGH);
 
     ledStat.setPixelColor(0, ledStat.Color(0, 255,0));
+    ledStat.show();
 }
 
 
