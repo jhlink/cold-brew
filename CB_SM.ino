@@ -1,26 +1,29 @@
+#include <Adafruit_NeoPixel.h>
+
 // Import NeoPixel library to initialize pixel 
-#define VALV_PMP 7
+#define VALV_PUMP 7
 #define VALV_CBR 6
-#define VAVL_ATM 5
+#define VALV_ATM 5
 #define PUMP	4
 #define BTN 3
 #define PRS_SEN 8
 
 // Different states of the machine: Idle, Vacuum, Dwell, and Drain
-enum states {IDLE, VACU, DWLL, DRIN}
-
+enum states {IDLED, VACU, DWLL, DRIN};
+Adafruit_NeoPixel ledStat = Adafruit_NeoPixel(1, 2, NEO_GRB + NEO_KHZ800);
 unsigned long startTime;
 
 // Machine of various 'states' and updating method
 class Machine
 {
+    public:
     // Class Member Variables
 	volatile int state;						// Current state of the machine
 	long vacDwlTime;    					// Time limit for Vacuum and Dwell state combined
 	int updateInterval; 					// Update interval for checking for changed button state
  
  	// Constructor for Machine class
-  	public:
+  	
   	Machine(int startState, long setTime, int interval = 20)
   	{
 		state = startState;
@@ -29,13 +32,13 @@ class Machine
   	}
 };
 
-Machine coffee(IDLE, 300000); 
-volatile int* volatile ptr = coffee.state;
+Machine coffee(IDLED, 300000); 
+volatile int* volatile ptr = &coffee.state;
 
 void setup() {
 	Serial.begin(9600);
 
-	pinMode(VALV_PMP, OUTPUT);
+	pinMode(VALV_PUMP, OUTPUT);
 	pinMode(VALV_CBR, OUTPUT);
 	pinMode(VALV_ATM, OUTPUT);
 	pinMode(PUMP, OUTPUT);
@@ -43,15 +46,15 @@ void setup() {
 	pinMode(PRS_SEN, INPUT);
 	
 	pinMode(BTN, INPUT_PULLUP);
-	attachINterrupt(BTN, changeState, FALLING);
+	attachInterrupt(BTN, changeState, FALLING);
 }
 
 void changeState() {
 	switch (coffee.state)
 	{
-		case IDLE:
+		case IDLED:
 			coffee.state = VACU;
-			//	Idle -> Vacuum
+			//	IDLED -> Vacuum
 			break;
 		case VACU:
 			coffee.state = DRIN;
@@ -62,8 +65,8 @@ void changeState() {
 			//	Dwell -> Drain
 			break;
 		case DRIN:
-			coffee.state = IDLE
-			//	Drain -> Idle
+			coffee.state = IDLED;
+			//	Drain -> IDLED
 			break;
 		default:
 			break;
@@ -78,8 +81,8 @@ void loop() {
 
 	switch (*ptr)
 	{
-		case IDLE:
-			idle();
+		case IDLED:
+			idled();
 			ptr = NULL;
 			break;
 
@@ -108,14 +111,14 @@ void loop() {
 	}
 }
 
-void idle() {
-	led.clear();
+void idled() {
+	ledStat.clear();
 }
 
 void vacuum() {
 	startTime = millis();
 	digitalWrite(VALV_PUMP, HIGH);
-	led.strip(0, led.strip.Color(125, 125, 0))
+	ledStat.setPixelColor(0, ledStat.Color(255, 255,0));
 	digitalWrite(PUMP, HIGH);
 }
 
@@ -124,7 +127,7 @@ void dwell() {
 	digitalWrite(PUMP, LOW);
 	digitalWrite(VALV_CBR, HIGH);
 
-	led.strip(0, led.Color(255, 0, 0));
+    ledStat.setPixelColor(0, ledStat.Color(255, 0, 0));
 }
 
 void drain() {
@@ -132,7 +135,7 @@ void drain() {
 	digitalWrite(VALV_CBR, LOW);
 	digitalWrite(VALV_ATM, HIGH);
 
-	led.strip(0, led.Color(0, 255, 0));
+    ledStat.setPixelColor(0, ledStat.Color(0, 255,0));
 }
 
 
