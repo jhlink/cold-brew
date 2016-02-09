@@ -1,139 +1,98 @@
+#include <Button.h>
+#include <FiniteStateMachine.h>
 #include <Adafruit_NeoPixel.h>
 
 // Import NeoPixel library to initialize pixel 
 #define VALV_PUMP 7
-#define VALV_CBR 6
 #define VALV_ATM 5
 #define PUMP	4
-#define BTN 2
+#define BTN     2
 #define PRS_SEN 9
+#define NEOPIX  3
 
 // Different states of the machine: Idle, Vacuum, Dwell, and Drain
-enum states {IDLED=1, VACU=2, DWLL=3, DRIN=4};
-Adafruit_NeoPixel ledStat = Adafruit_NeoPixel(1, 3, NEO_GRB + NEO_KHZ800);
+enum states {IDLED, VACU, DWLL, DRIN};
+const byte NUMBER_OF_SELECATBLE_STATES = 4; 
+Adafruit_NeoPixel ledStat = Adafruit_NeoPixel(1, NEOPIX, NEO_GRB + NEO_KHZ800);
 unsigned long startTime;
+extern void idled();
+extern void vacuum();
+extern void dwell();
+extern void drain();
+/** this is the definitions of the states that our program uses */
+State idle_state = State(idled);  //no operation
+State vacu_state = State(vacuum);  //this state fades the LEDs in
+State dwll_state = State(dwell);  //this state flashes the leds FLASH_ITERATIONS times at 1000/FLASH_INTERVAL
+State drin_state = State(drain); //show the circular animation
 
-// Machine of various 'states' and updating method
-class Machine
-{
-    public:
-    // Class Member Variables
-	volatile int state;						// Current state of the machine
-	unsigned long vacDwlTime;    					// Time limit for Vacuum and Dwell state combined
-	int updateInterval; 					// Update interval for checking for changed button state
- 
- 	// Constructor for Machine class
-  	
-  	Machine(int startState, unsigned long setTime, int interval = 200)
-  	{
-		state = startState;
-  	  	vacDwlTime = setTime;
-		updateInterval = interval;
-  	}
-};
+FSM stateMachine = FSM(idle_state); //initialize state machine, start in state: noop
 
-Machine coffee(IDLED, 30000); 
-volatile int* volatile ptr = &coffee.state;
+Button button = Button(BTN, PULLUP); //initialize the button (wire between BUTTON_PIN and ground)
 
 void setup() {
 	Serial.begin(9600);
 
 	pinMode(VALV_PUMP, OUTPUT);
-	pinMode(VALV_CBR, OUTPUT);
 	pinMode(VALV_ATM, OUTPUT);
 	pinMode(PUMP, OUTPUT);
 
 	pinMode(PRS_SEN, INPUT_PULLUP);
-	pinMode(BTN, INPUT_PULLUP);
-	attachInterrupt(0, changeState, FALLING);
 }
-
-long lastDebounceTime = 0;
-volatile int lastState;
-void changeState() {
-    
-    if ((millis() - lastDebounceTime) > coffee.updateInterval) {    
-    	switch (coffee.state)
-    	{
-    		case IDLED:
-    			coffee.state = VACU;
-    			//	IDLED -> Vacuum
-    			break;
-    		case VACU:
-    			coffee.state = DRIN;
-    			//	Vacuum -> Drain
-    			break;
-    		case DWLL:
-//       			coffee.state = DRIN;
-    			//	Dwell -> Drain
-    			break;
-    		case DRIN:
-    			coffee.state = IDLED;
-    			//	Drain -> IDLED
-    			break;
-    	}
-        if (lastState == coffee.state) {
-            Serial.println("------");
-        } else {
-            ptr = &coffee.state;
-            lastState = coffee.state;
-        }
-        
-        lastDebounceTime = millis();
-    }
-}
-
 
 void loop() {
 	// Execute methods due to volatile state changes
 
-	switch (*ptr)
-	{
-		case IDLED:
-            Serial.println("IDLE");
-			idled();
-			break;
-
-		case VACU:
-            Serial.println("VACU");
-			vacuum();
-			break;
-
-		case DWLL:
-            Serial.println("DWLL");
-			dwell();
-			break;
-
-		case DRIN:
-            Serial.println("DRIN");
-			drain();
-			break;
-	}
-
-	if ((*ptr == VACU || *ptr == DWLL) && (millis() - startTime) > coffee.vacDwlTime) {
-        Serial.println("----------------------------------------------");
-		coffee.state = DRIN;
-	} else if ((millis() - startTime) <= coffee.vacDwlTime && *ptr == VACU && digitalRead(PRS_SEN) == LOW) {
-		coffee.state = DWLL;
-	} else if ((millis() - startTime) <= coffee.vacDwlTime && *ptr == DWLL && digitalRead(PRS_SEN) == HIGH) {
-		coffee.state = VACU;
-	}
-
+      //counter variable, holds number of button presses
+    static byte buttonPresses = 0; //only accessible from this function, value is kept between iterations
+    
+    if (button.uniquePress()){
+        //increment buttonPresses and constrain it to [0, NUMBER_OF_SELECATBLE_STATES-1]
+        buttonPresses = ++buttonPresses % NUMBER_OF_SELECATBLE_STATES; 
+        /*
+          manipulate the state machine by external input and control
+        */
+        //CONTROL THE STATE
+        switch (buttonPresses){
+            case IDLED:
+                Serial.println("IDLE");
+                stateMachine.transitionTo(vacu_state); break;
+                break;
+    
+            case VACU:
+                Serial.println("VACU");
+                stateMachine.transitionTo(drin_state); break; //first press
+                break;
+    
+            case DWLL:
+                Serial.println("DWLL");
+                stateMachine.transitionTo(drin_state); break; //second press
+                break;
+    
+            case DRIN:
+                Serial.println("DRIN");
+                stateMachine.transitionTo(idle_state); break; //second press
+                break;
+        }
+    }
+    
+    //THIS LINE IS CRITICAL
+    //do not remove the stateMachine.update() call, it is what makes this program 'tick'
+    stateMachine.update();
 }
 
 void idled() {
-	ledStat.clear();
     digitalWrite(VALV_PUMP, LOW);
-    digitalWrite(VALV_CBR, LOW);
     digitalWrite(VALV_ATM, LOW);
     digitalWrite(PUMP, LOW);
+    
+    ledStat.clear();
+    ledStat.show();
 }
 
 void vacuum() {
-	startTime = millis();
 	digitalWrite(VALV_PUMP, HIGH);
+    digitalWrite(VALV_ATM, LOW);
 	digitalWrite(PUMP, HIGH);
-    digitalWrite(VALV_CBR, LOW);
    
     ledStat.setPixelColor(0, ledStat.Color(255, 255,0));
     ledStat.show();
@@ -141,17 +100,17 @@ void vacuum() {
 
 void dwell() {
 	digitalWrite(VALV_PUMP, LOW);
+    digitalWrite(VALV_ATM, LOW);
 	digitalWrite(PUMP, LOW);
-	digitalWrite(VALV_CBR, HIGH);
-
+    
     ledStat.setPixelColor(0, ledStat.Color(255, 0, 0));
     ledStat.show();
 }
 
 void drain() {  
 	digitalWrite(VALV_PUMP, LOW);
-	digitalWrite(VALV_CBR, LOW);
-	digitalWrite(VALV_ATM, HIGH);
+    digitalWrite(VALV_ATM, HIGH);
+    digitalWrite(PUMP, LOW);
 
     ledStat.setPixelColor(0, ledStat.Color(0, 255,0));
     ledStat.show();
