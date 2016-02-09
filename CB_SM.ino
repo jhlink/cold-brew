@@ -15,10 +15,12 @@ enum states {IDLED, VACU, DWLL, DRIN};
 const byte NUMBER_OF_SELECATBLE_STATES = 4; 
 Adafruit_NeoPixel ledStat = Adafruit_NeoPixel(1, NEOPIX, NEO_GRB + NEO_KHZ800);
 unsigned long startTime;
+
 extern void idled();
 extern void vacuum();
 extern void dwell();
 extern void drain();
+
 /** this is the definitions of the states that our program uses */
 State idle_state = State(idled);  //no operation
 State vacu_state = State(vacuum);  //this state fades the LEDs in
