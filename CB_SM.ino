@@ -99,7 +99,6 @@ void loop() {
                    	//  Begin timer for total time between Vacuum and Dwell states
                    	startTime = millis(); 
 					stateStartTime = millis();
-		
                     stateMachine.transitionTo(vacu_state);
                     break;
         
@@ -153,14 +152,17 @@ void vacuum() {
 void vacuumUpdate() {
 	//	Keep track of time. Kick into Drain state when time is up. 
 	//		Ensures timer has priority over pressure.
-    	if ((millis() - startTime) > setTimeLimit) {
+	if ((millis() - startTime) > setTimeLimit) {
         	stateMachine.immediateTransitionTo(drin_state);
    	} else if ((digitalRead(PRS_SEN) == LOW) && ((millis() - stateStartTime) > stateDebounceLimit)) {
 		//	If the pressure is at or above the calibrated sensor threshold
 		//		the pin will read LOW, setting immediate transition to
 		//		the Dwell state
-        	stateMachine.immediateTransitionTo(dwll_state);
-    	}
+        Serial.print("Vacuum Update:  \t");
+        Serial.println((millis() - stateStartTime));
+        stateStartTime = millis();
+    	stateMachine.immediateTransitionTo(dwll_state);
+	}
 }
 
 //	Pump is first turned off, then the valve pump is turned off. 
@@ -182,8 +184,11 @@ void dwellUpdate() {
 	if ((millis() - startTime) > setTimeLimit) {
 		stateMachine.immediateTransitionTo(drin_state);
 	} else if ((digitalRead(PRS_SEN) == HIGH) && ((millis() - stateStartTime) > stateDebounceLimit)) {
-	    	//	If pressure is below set pressure threshold, return to 
-	    	//		Vacuum state to repressurize. 
+    	//	If pressure is below set pressure threshold, return to 
+    	//		Vacuum state to repressurize. 
+        Serial.print("Dwell Update: \t");
+        Serial.println((millis() - stateStartTime));
+        stateStartTime = millis();
 		stateMachine.immediateTransitionTo(vacu_state);
 	}
 }
