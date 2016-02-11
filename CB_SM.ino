@@ -32,9 +32,11 @@ State drin_state = State(drain);
 
 FSM stateMachine = FSM(idle_state);		//	Initial SM with beginning state
 
-unsigned long startTime;				//	Used to track times for Vacuum/Dwell timer
+unsigned long startTime;			//	Used to track times for Vacuum/Dwell timer
 unsigned long setTimeLimit = 420000;		//	User defined time limit
 
+unsigned long stateStartTime;			//	Used to track times for entering Vacuum/Dwell states
+unsigned long stateDebounceLimit = 30000;	//	Used to define state debounce time limit
 
 int buttonState;             // the current reading from the input pin
 int lastButtonState = HIGH;   // the previous reading from the input pin
@@ -88,14 +90,16 @@ void loop() {
             Serial.println(buttonPresses);
             switch (buttonPresses){
                 case IDLED:
-                    Serial.println("IDLE");
-                    stateMachine.transitionTo(idle_state);
-                    break;
+                	Serial.println("IDLE");
+               		stateMachine.transitionTo(idle_state);
+                	break;
         
                 case VACU:
-                    Serial.println("VACU");
-                    //  Begin timer for total time between Vacuum and Dwell states
-                    startTime = millis(); 
+                	Serial.println("VACU");
+                   	//  Begin timer for total time between Vacuum and Dwell states
+                   	startTime = millis(); 
+					stateStartTime = millis();
+		
                     stateMachine.transitionTo(vacu_state);
                     break;
         
@@ -105,9 +109,10 @@ void loop() {
 //                    break;
         
                 case DRIN:
-                    Serial.println("DRIN");
-                    stateMachine.transitionTo(drin_state);
-                    break;
+                	Serial.println("DRIN");
+					stateStartTime = millis();
+                	stateMachine.transitionTo(drin_state);
+                	break;
             }
           }
         }
@@ -150,7 +155,7 @@ void vacuumUpdate() {
 	//		Ensures timer has priority over pressure.
     	if ((millis() - startTime) > setTimeLimit) {
         	stateMachine.immediateTransitionTo(drin_state);
-   	} else if (digitalRead(PRS_SEN) == LOW) {
+   	} else if ((digitalRead(PRS_SEN) == LOW) && ((millis() - stateStartTime) > stateDebounceLimit)) {
 		//	If the pressure is at or above the calibrated sensor threshold
 		//		the pin will read LOW, setting immediate transition to
 		//		the Dwell state
@@ -176,7 +181,7 @@ void dwellUpdate() {
 	//		Ensures timer has priority over pressure.
 	if ((millis() - startTime) > setTimeLimit) {
 		stateMachine.immediateTransitionTo(drin_state);
-	} else if (digitalRead(PRS_SEN) == HIGH) {
+	} else if ((digitalRead(PRS_SEN) == HIGH) && ((millis() - stateStartTime) > stateDebounceLimit)) {
 	    	//	If pressure is below set pressure threshold, return to 
 	    	//		Vacuum state to repressurize. 
 		stateMachine.immediateTransitionTo(vacu_state);
