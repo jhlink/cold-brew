@@ -15,6 +15,8 @@ extern void dwell();
 extern void drain();
 extern void vacuumUpdate();
 extern void dwellUpdate();
+extern void drainUpdate();
+extern void done();
 
 ////	Define the states within the SM
 
@@ -27,8 +29,10 @@ State vacu_state = State(vacuum, vacuumUpdate, NULL);
 // Dwell state, with accompanying update function for extra dwell state behaviours	
 State dwll_state = State(dwell, dwellUpdate, NULL);		
 
-// Drain state
-State drin_state = State(drain);	
+// Drain state, with timeout of X seconds
+State drin_state = State(drain, drainUpdate, NULL);	
+
+State done_state = State(done);
 
 FSM stateMachine = FSM(idle_state);		//	Initial SM with beginning state
 
@@ -38,14 +42,16 @@ unsigned long setTimeLimit = 420000;		//	User defined time limit
 unsigned long stateStartTime;			//	Used to track times for entering Vacuum/Dwell states
 unsigned long stateDebounceLimit = 30000;	//	Used to define state debounce time limit
 
+unsigned long drainTimeout = 60000;		//	Timeout for Drain
+
 int buttonState;             // the current reading from the input pin
 int lastButtonState = HIGH;   // the previous reading from the input pin
 long lastDebounceTime = 0;  // the last time the output pin was toggled
 long debounceDelay = 100;    // the debounce time; increase if the output flickers
 
 // Different states of the machine: Idle, Vacuum, Dwell, and Drain
-enum states {IDLED, VACU, DRIN, DWLL};
-const byte NUM_OF_STATES = 3; 	//	Number of total states
+enum states {IDLED, VACU, DRIN, DONE, DWLL};
+const byte NUM_OF_STATES = 4;	//	Number of total states
 Adafruit_NeoPixel ledStat = Adafruit_NeoPixel(1, NEOPIX, NEO_GRB + NEO_KHZ800);		//	Neopixel initializiation
 
 void setup() {
@@ -112,6 +118,11 @@ void loop() {
 					stateStartTime = millis();
                 	stateMachine.transitionTo(drin_state);
                 	break;
+
+				case DONE:
+					Serial.println("DONE");
+					stateMachine.transitionTo(done_state);
+					break;
             }
           }
         }
@@ -202,8 +213,24 @@ void drain() {
 	digitalWrite(VALV_PUMP, LOW);
 	digitalWrite(VALV_ATM, HIGH);
 
-	ledStat.setPixelColor(0, ledStat.Color(0, 255,0));
+	ledStat.setPixelColor(0, ledStat.Color(238, 130, 238));
 	ledStat.show();
+	stateStartTime = millis();	
 }
 
+
+void drainUpdate() {
+	if((millis() - stateStartTime) < drainTimeout) {
+		stateMachine.transitionTo(done_state);
+	}
+}
+
+void done() {
+	digitalWrite(PUMP, LOW);
+	digitalWrite(VALV_PUMP, LOW);
+	digitalWrite(VALV_ATM, LOW);
+
+	ledStat.setPixelColor(0, ledStat.Color(0, 255, 0));
+	ledStat.show();
+}
 
