@@ -1,9 +1,0 @@
-#!/usr/bin/env bash
-
-version="$1"
-IFS=. read -r major minor build <<< "$version"
-
-sed -i '' 's/\(#define COLDBREW_VERSION_MAJOR\).*/\1 '$major'/' coldbrew.h
-sed -i '' 's/\(#define COLDBREW_VERSION_MINOR\).*/\1 '$minor'/' coldbrew.h
-sed -i '' 's/\(#define COLDBREW_VERSION_PATCH\).*/\1 '$build'/' coldbrew.h
-sed -i '' 's/version-.*-green.svg/version-'$version'-green.svg/g' README.md
