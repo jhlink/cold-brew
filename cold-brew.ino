@@ -17,7 +17,6 @@ extern void drain();
 extern void vacuumUpdate();
 extern void dwellUpdate();
 extern void drainUpdate();
-extern void done();
 
 ////	Define the states within the SM
 
@@ -33,21 +32,17 @@ State dwll_state = State(dwell, dwellUpdate, NULL);
 // Drain state, with timeout of X seconds
 State drin_state = State(drain, drainUpdate, NULL);	
 
-State done_state = State(done);
 
 FSM stateMachine = FSM(idle_state);		//	Initial SM with beginning state
 
 unsigned long startTime;			//	Used to track times for Vacuum/Dwell timer
-unsigned long setTimeLimit = 420000;		//	User defined time limit
+unsigned long setTimeLimit = 120000;		//	User defined time limit
 
 unsigned long stateStartTime;			//	Used to track times for entering Vacuum/Dwell states
 unsigned long stateDebounceLimit = 30000;	//	Used to define state debounce time limit
+unsigned long vacuDebounceLimit = 1000;    //  Used to define state debounce time limit
 
-/*************************** TIMOUT DURATION ***************************/
-unsigned long vacuumTimeLimit  = 120000;
-unsigned long dwellTimeLimit = 600000;
 unsigned long drainTimeout = 60000;
-
 
 int buttonState;             // the current reading from the input pin
 int lastButtonState = HIGH;   // the previous reading from the input pin
@@ -55,17 +50,16 @@ long lastDebounceTime = 0;  // the last time the output pin was toggled
 long debounceDelay = 100;    // the debounce time; increase if the output flickers
 
 // Different states of the machine: Idle, Vacuum, Dwell, and Drain
-enum states {IDLED, VACU, DRIN, DONE, DWLL};
+enum states {IDLED, VACU, DWLL, DRIN};
 const byte NUM_OF_STATES = 4;	//	Number of total states
 
 Adafruit_NeoPixel ledStat = Adafruit_NeoPixel(NUM_OF_PIX, NEOPIX, NEO_GRB + NEO_KHZ800);		//	Neopixel initializiation 
 
 /*************************** COLOR FOR MODES  ***************************/
-uint32_t idleLEDColor = ledStat.Color(0, 0, 0);			// Clear color
+uint32_t idleLEDColor = ledStat.Color(0, 255, 0);			// Green
 uint32_t vacuumLEDColor = ledStat.Color(255, 255, 0);		// Yellow
+uint32_t dwellLEDColor = ledStat.Color(238, 130, 238);   // Purple
 uint32_t drainLEDColor = ledStat.Color(255, 0, 0);		// Red
-uint32_t doneLEDColor = ledStat.Color(0, 255, 0);			// Green
-uint32_t dwellLEDColor = ledStat.Color(238, 130, 238);	// Purple
 
 void setup() {
 	Serial.begin(9600);
@@ -73,14 +67,15 @@ void setup() {
 	pinMode(VALV_ATM, OUTPUT);
 	pinMode(VACU_PUMP, OUTPUT);
 	pinMode(PRS_SEN, INPUT_PULLUP);
-	pinMode(CAP_TCH, INPUT_PULLUP);
+	pinMode(CAP_TCH, INPUT);
 	ledStat.begin();
 }
 
+//	Keeps track of button presses to direct button states
+//	Value only exists within this function; Value exists between iterations
+static int buttonPresses = 0; 
+
 void loop() {
-	//	Keeps track of button presses to direct button states
-	//	Value only exists within this function; Value exists between iterations
-    static int buttonPresses = 0; 
 
     // read the state of the switch into a local variable:
     int reading = digitalRead(CAP_TCH);
@@ -117,24 +112,23 @@ void loop() {
                    	//  Begin timer for total time between Vacuum and Dwell states
                    	startTime = millis(); 
 					stateStartTime = millis();
+
+					//	Ensure next button press will lead to DRAIN state.
+					buttonPresses = 2; 
+
                     stateMachine.transitionTo(vacu_state);
                     break;
         
-//                case DWLL:
-//                    Serial.println("DWLL");
-//                    stateMachine.transitionTo(drin_state);
-//                    break;
+                case DWLL:
+                    Serial.println("DWLL");
+                    stateMachine.transitionTo(drin_state);
+                    break;
         
                 case DRIN:
                 	Serial.println("DRIN");
 					stateStartTime = millis();
                 	stateMachine.transitionTo(drin_state);
                 	break;
-
-				case DONE:
-					Serial.println("DONE");
-					stateMachine.transitionTo(done_state);
-					break;
             }
           }
         }
@@ -150,7 +144,7 @@ void setPixelRingColor(uint32_t val) {
 	for (int i = 0; i < NUM_OF_PIX; i++) {
 		ledStat.setPixelColor(i, val);
 	}
-	ledState.show();
+	ledStat.show();
 }	
 
 //	Pump is turned off first, pump valve closes, and finally the atm valve
@@ -160,8 +154,7 @@ void idled() {
 	digitalWrite(DRAIN_MTR, LOW);
 	digitalWrite(VALV_ATM, LOW);
 
-	ledStat.setPixelRingColor(idleLEDColor);
-	ledStat.show();
+	setPixelRingColor(idleLEDColor);
 }
 
 //	The pump valve opens, then the pump turns on. Atm valve is ensured
@@ -172,8 +165,7 @@ void vacuum() {
 	digitalWrite(VACU_PUMP, HIGH);
 	digitalWrite(VALV_ATM, LOW);
 	   
-	ledStat.setPixelRingColor(vacuumLEDColor);
-	ledStat.show();
+	setPixelRingColor(vacuumLEDColor);
 }
 
 //	Keeps track of pressure and transitions to Dwell state if 
@@ -182,23 +174,27 @@ void vacuum() {
 void vacuumUpdate() {
 	//	Keep track of time. Kick into Drain state when time is up. 
 	//		Ensures timer has priority over pressure.
-//	if ((millis() - startTime) > setTimeLimit) {
-//        	stateMachine.immediateTransitionTo(drin_state);
-//   	} else if ((digitalRead(PRS_SEN) == LOW) && ((millis() - stateStartTime) > stateDebounceLimit)) {
-//    	//	If the pressure is at or above the calibrated sensor threshold
-//    	//		the pin will read LOW, setting immediate transition to
-//    	//		the Dwell state
-//        Serial.print("Vacuum Update:  \t");
-//        Serial.println((millis() - stateStartTime));
-//        stateStartTime = millis();
-//    	stateMachine.immediateTransitionTo(dwll_state);
-//	}
+	if ((millis() - startTime) > setTimeLimit) {
+		stateStartTime = millis();
 
+		//	Ensure that next button press in DRAIN state will lead to IDLE
+		buttonPresses = 3;
 
-//		Pressure exceeded (dwell)--> Time expired?(drain) --> button pressed? (drain)
+       	stateMachine.immediateTransitionTo(drin_state);
+   	} else if ((digitalRead(PRS_SEN) == LOW) && ((millis() - stateStartTime) > vacuDebounceLimit)) {
+    	//	If the pressure is at or above the calibrated sensor threshold
+    	//		the pin will read LOW, setting immediate transition to
+    	//		the Dwell state. PRS_SEN is NO.
+        Serial.print("Vacuum Update:  \t");
+        Serial.println((millis() - stateStartTime));
 
-	if ((millis() - startTime) > vacuumTimeLimit) {
-		stateMachine.immediateTransitionTo(dwll_state);
+		//  Resets state start time for next state.
+        stateStartTime = millis();
+
+		//	Ensure button kicks into DRAIN state if button is pressed
+		buttonPresses = 2;
+
+    	stateMachine.immediateTransitionTo(dwll_state);
 	}
 }
 
@@ -209,8 +205,7 @@ void dwell() {
 	digitalWrite(DRAIN_MTR, LOW);
    	digitalWrite(VALV_ATM, LOW);
 	    
-	ledStat.setPixelRingColor(dwellLEDColor);
-	ledStat.show();
+	setPixelRingColor(dwellLEDColor);
 }
 
 //	If pressure fall threshold, SM transitions immediately to Vacuum state.
@@ -218,22 +213,24 @@ void dwell() {
 void dwellUpdate() {
 	//	Keep track of time. Kick into Drain state when time is up. 
 	//		Ensures timer has priority over pressure.
-//	if ((millis() - startTime) > setTimeLimit) {
-//		stateMachine.immediateTransitionTo(drin_state);
-//	} else if ((digitalRead(PRS_SEN) == HIGH) && ((millis() - stateStartTime) > stateDebounceLimit)) {
-//    	//	If pressure is below set pressure threshold, return to 
-//    	//		Vacuum state to repressurize. 
-//        Serial.print("Dwell Update: \t");
-//        Serial.println((millis() - stateStartTime));
-//        stateStartTime = millis();
-//		stateMachine.immediateTransitionTo(vacu_state);
-//	}
+	if ((millis() - startTime) > setTimeLimit) {
+		stateStartTime = millis();
 
-//		Pressure exceeded (dwell)--> Time expired?(drain) --> button pressed? (drain)
-	if ((millis() - startTime) > dwellTimeLimit) {
-		stateMachine.immediateTransitionTo(drin_state);	
-	} 
-}
+		//	Ensure that next button press in DRAIN state will lead to IDLE
+		buttonPresses = 3;
+
+		stateMachine.immediateTransitionTo(drin_state);
+	} else if ((digitalRead(PRS_SEN) == HIGH) && ((millis() - stateStartTime) > stateDebounceLimit)) {
+    	//	If pressure is below set pressure threshold, return to 
+    	//		Vacuum state to repressurize. 
+        Serial.print("Dwell Update: \t");
+        Serial.println((millis() - stateStartTime));
+
+        stateStartTime = millis();
+		stateMachine.immediateTransitionTo(vacu_state);
+	}
+} 
+
 
 //	Pump is turned off first, then the pump valve closes. The atm valve
 //		opens, and displays Green as the LED status.
@@ -244,24 +241,13 @@ void drain() {
 	digitalWrite(DRAIN_MTR, HIGH);
 	digitalWrite(VALV_ATM, HIGH);
 
-	ledStat.setPixelRingColor(drainLEDColor);
+	setPixelRingColor(drainLEDColor);
 }
 
 
 void drainUpdate() {
 	if((millis() - stateStartTime) >  drainTimeout) {
-		stateMachine.transitionTo(done_state);
+		stateMachine.transitionTo(idle_state);
 	}
-
-	//pause drain _timer in place if coffee  in place
-}
-
-// pause state
-void done() {
-	digitalWrite(VACU_PUMP, LOW);
-	digitalWrite(DRAIN_MTR, LOW);
-	digitalWrite(VALV_ATM, LOW);
-
-	ledStat.setPixelRingColor(doneLEDColor);
 }
 
