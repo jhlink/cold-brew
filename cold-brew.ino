@@ -1,12 +1,13 @@
 #include <FiniteStateMachine.h>
 #include <Adafruit_NeoPixel.h>
 
-#define VALV_PUMP 7
-#define VALV_ATM 5
-#define PUMP	4
-#define BTN     2
+#define DRAIN_MTR 6
+#define VALV_ATM 7
+#define VACU_PUMP	8
+#define CAP_TCH     A6
 #define PRS_SEN 10
-#define NEOPIX  3
+#define NEOPIX  5
+#define NUM_OF_PIX 12
 
 //  Tell compiler that functions exist, just implementated later
 extern void idled();
@@ -56,8 +57,8 @@ long debounceDelay = 100;    // the debounce time; increase if the output flicke
 // Different states of the machine: Idle, Vacuum, Dwell, and Drain
 enum states {IDLED, VACU, DRIN, DONE, DWLL};
 const byte NUM_OF_STATES = 4;	//	Number of total states
-Adafruit_NeoPixel ledStat = Adafruit_NeoPixel(1, NEOPIX, NEO_GRB + NEO_KHZ800);		//	Neopixel initializiation
 
+Adafruit_NeoPixel ledStat = Adafruit_NeoPixel(NUM_OF_PIX, NEOPIX, NEO_GRB + NEO_KHZ800);		//	Neopixel initializiation 
 
 /*************************** COLOR FOR MODES  ***************************/
 uint32_t idleLEDColor = ledStat.Color(0, 0, 0);			// Clear color
@@ -68,11 +69,11 @@ uint32_t dwellLEDColor = ledStat.Color(238, 130, 238);	// Purple
 
 void setup() {
 	Serial.begin(9600);
-	pinMode(VALV_PUMP, OUTPUT);
+	pinMode(DRAIN_MTR, OUTPUT);
 	pinMode(VALV_ATM, OUTPUT);
-	pinMode(PUMP, OUTPUT);
+	pinMode(VACU_PUMP, OUTPUT);
 	pinMode(PRS_SEN, INPUT_PULLUP);
-	pinMode(BTN, INPUT_PULLUP);
+	pinMode(CAP_TCH, INPUT_PULLUP);
 	ledStat.begin();
 }
 
@@ -82,7 +83,7 @@ void loop() {
     static int buttonPresses = 0; 
 
     // read the state of the switch into a local variable:
-    int reading = digitalRead(BTN);
+    int reading = digitalRead(CAP_TCH);
     
     // If the switch changed, due to noise or pressing:
     if (reading != lastButtonState) {
@@ -141,22 +142,25 @@ void loop() {
 
     lastButtonState = reading;
 
-    if ((millis() % 1000) == 0) {
-        Serial.println(digitalRead(PRS_SEN));
-
-    }
 	//	Updates the SM for every loop -- APPLICATION CRITICAL
     stateMachine.update();
 }
 
+void setPixelRingColor(uint32_t val) {
+	for (int i = 0; i < NUM_OF_PIX; i++) {
+		ledStat.setPixelColor(i, val);
+	}
+	ledState.show();
+}	
+
 //	Pump is turned off first, pump valve closes, and finally the atm valve
 //		closes. LED status is cleared. 
 void idled() {
-	digitalWrite(PUMP, LOW);
-	digitalWrite(VALV_PUMP, LOW);
+	digitalWrite(VACU_PUMP, LOW);
+	digitalWrite(DRAIN_MTR, LOW);
 	digitalWrite(VALV_ATM, LOW);
 
-	ledStat.setPixelColor(0, idleLEDColor);
+	ledStat.setPixelRingColor(idleLEDColor);
 	ledStat.show();
 }
 
@@ -164,11 +168,11 @@ void idled() {
 //		to be closed due to necessary safety redundancy. Displays 
 //		Yellow on LED status.
 void vacuum() {
-	digitalWrite(VALV_PUMP, HIGH);
-	digitalWrite(PUMP, HIGH);
+	digitalWrite(DRAIN_MTR, LOW);
+	digitalWrite(VACU_PUMP, HIGH);
 	digitalWrite(VALV_ATM, LOW);
 	   
-	ledStat.setPixelColor(0, vacuumLEDColor);
+	ledStat.setPixelRingColor(vacuumLEDColor);
 	ledStat.show();
 }
 
@@ -190,6 +194,9 @@ void vacuumUpdate() {
 //    	stateMachine.immediateTransitionTo(dwll_state);
 //	}
 
+
+//		Pressure exceeded (dwell)--> Time expired?(drain) --> button pressed? (drain)
+
 	if ((millis() - startTime) > vacuumTimeLimit) {
 		stateMachine.immediateTransitionTo(dwll_state);
 	}
@@ -198,11 +205,11 @@ void vacuumUpdate() {
 //	Pump is first turned off, then the valve pump is turned off. 
 //		Atm valve is ensured to be closed. Displays Red on LED status.
 void dwell() {
-	digitalWrite(PUMP, LOW);
-	digitalWrite(VALV_PUMP, LOW);
+	digitalWrite(VACU_PUMP, LOW);
+	digitalWrite(DRAIN_MTR, LOW);
    	digitalWrite(VALV_ATM, LOW);
 	    
-	ledStat.setPixelColor(0, dwellLEDColor);
+	ledStat.setPixelRingColor(dwellLEDColor);
 	ledStat.show();
 }
 
@@ -222,6 +229,7 @@ void dwellUpdate() {
 //		stateMachine.immediateTransitionTo(vacu_state);
 //	}
 
+//		Pressure exceeded (dwell)--> Time expired?(drain) --> button pressed? (drain)
 	if ((millis() - startTime) > dwellTimeLimit) {
 		stateMachine.immediateTransitionTo(drin_state);	
 	} 
@@ -232,12 +240,11 @@ void dwellUpdate() {
 void drain() {  
 	// Close pump valve, turn off pump, and open the atmosphere valve
 	//	to equalize with external pressure.
-	digitalWrite(PUMP, LOW);
-	digitalWrite(VALV_PUMP, LOW);
+	digitalWrite(VACU_PUMP, LOW);
+	digitalWrite(DRAIN_MTR, HIGH);
 	digitalWrite(VALV_ATM, HIGH);
 
-	ledStat.setPixelColor(0, drainLEDColor);
-	ledStat.show();
+	ledStat.setPixelRingColor(drainLEDColor);
 }
 
 
@@ -245,14 +252,16 @@ void drainUpdate() {
 	if((millis() - stateStartTime) >  drainTimeout) {
 		stateMachine.transitionTo(done_state);
 	}
+
+	//pause drain _timer in place if coffee  in place
 }
 
+// pause state
 void done() {
-	digitalWrite(PUMP, LOW);
-	digitalWrite(VALV_PUMP, LOW);
+	digitalWrite(VACU_PUMP, LOW);
+	digitalWrite(DRAIN_MTR, LOW);
 	digitalWrite(VALV_ATM, LOW);
 
-	ledStat.setPixelColor(0, doneLEDColor);
-	ledStat.show();
+	ledStat.setPixelRingColor(doneLEDColor);
 }
 
