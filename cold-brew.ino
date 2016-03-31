@@ -8,6 +8,7 @@
 #define PRS_SEN 10
 #define NEOPIX  3
 
+
 //  Tell compiler that functions exist, just implementated later
 extern void idled();
 extern void vacuum();
@@ -37,16 +38,20 @@ State done_state = State(done);
 FSM stateMachine = FSM(idle_state);		//	Initial SM with beginning state
 
 unsigned long startTime;			//	Used to track times for Vacuum/Dwell timer
-unsigned long setTimeLimit = 420000;		//	User defined time limit
-
 unsigned long stateStartTime;			//	Used to track times for entering Vacuum/Dwell states
 unsigned long stateDebounceLimit = 30000;	//	Used to define state debounce time limit
 
 /*************************** TIMOUT DURATION ***************************/
+unsigned long setTimeLimit = 420000;		//	User defined time limit <<------- VERY IMPORTANT
+											//	WILL CUT OFF STATE TIME LIMITS IF THIS VARIABLE
+											//	IS NOT LONG ENOUGH.
 unsigned long vacuumTimeLimit  = 120000;
-unsigned long dwellTimeLimit = 600000;
+unsigned long dwellTimeLimit = 300000;
 unsigned long drainTimeout = 60000;
+unsigned long revacuumTimeout = 180000; //	Time taken in dwell state to vacuum for one minute. Currently 3min. 
+const unsigned long VACU_TIME = 60000;
 
+/***********************************************************************/
 
 int buttonState;             // the current reading from the input pin
 int lastButtonState = HIGH;   // the previous reading from the input pin
@@ -75,6 +80,9 @@ void setup() {
 	pinMode(BTN, INPUT_PULLUP);
 	ledStat.begin();
 }
+
+
+bool vacuumExtra = false;
 
 void loop() {
 	//	Keeps track of button presses to direct button states
@@ -189,10 +197,18 @@ void vacuumUpdate() {
 //        stateStartTime = millis();
 //    	stateMachine.immediateTransitionTo(dwll_state);
 //	}
-
-	if ((millis() - startTime) > vacuumTimeLimit) {
+	if ((millis() - startTime) > setTimeLimit) { 
+		stateStartTime = millis();
+		stateMachine.immediateTransitionTo(drin_state);
+	} else if ((millis() - stateStartTime) > vacuumTimeLimit) {
+		vacuumExtra = true;
+		stateStartTime = millis();
 		stateMachine.immediateTransitionTo(dwll_state);
-	}
+	} else if (((millis() - stateStartTime) > VACU_TIME) && vacuumExtra) {
+		vacuumExtra = false;
+		stateStartTime = millis();
+		stateMachine.immediateTransitionTo(dwll_state);
+	}	
 }
 
 //	Pump is first turned off, then the valve pump is turned off. 
@@ -221,8 +237,17 @@ void dwellUpdate() {
 //        stateStartTime = millis();
 //		stateMachine.immediateTransitionTo(vacu_state);
 //	}
-
-	if ((millis() - startTime) > dwellTimeLimit) {
+	if ((millis() - startTime) > setTimeLimit) { 
+		stateStartTime = millis();	
+		stateMachine.immediateTransitionTo(drin_state);
+//	} else if (((millis() - startTime) > revacuumTimeout) && vacuumExtra) {
+//	The previous starts vacuum state at the 3 minute mark in the total brew time.
+//		The line below starts the vacuum start after 3 minutes into the dwell state.
+	} else if (((millis() - stateStartTime) > revacuumTimeout) && vacuumExtra) {
+		stateStartTime = millis();
+		stateMachine.immediateTransitionTo(vacu_state);
+	} else if ((millis() - stateStartTime) > dwellTimeLimit) {
+		stateStartTime = millis();
 		stateMachine.immediateTransitionTo(drin_state);	
 	} 
 }
