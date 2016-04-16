@@ -22,6 +22,10 @@ extern void drainUpdate();
 
 ////	Define the states within the SM
 
+const unsigned long TIME_FOR_MTR_TO_OPEN_LID = 210;
+const unsigned long PULSE_TIME = 10;
+const unsigned long DISSIPATE_TIME = 100;
+
 // Idle state
 State idle_state = State(idled);			
 
@@ -38,19 +42,21 @@ State drin_state = State(drain, drainUpdate, NULL);
 FSM stateMachine = FSM(idle_state);		//	Initial SM with beginning state
 
 unsigned long startTime;			//	Used to track times for Vacuum/Dwell timer
-unsigned long setTimeLimit = 60000;	// Test
-//unsigned long setTimeLimit = 600000;		//	User defined time limit
 
+/********** TIMEOUT FOR SUM OF VACUUM AND DWELL TIMES **********/
+//unsigned long setTimeLimit = 60000;	// Test
+unsigned long setTimeLimit = 480000;		//	User defined time limit
+
+
+/********** TIMEOUT FOR DRAIN TIME **********/
+//unsigned long drainTimeout = 10000;   // Test
+unsigned long drainTimeout = 240000;
+
+
+/********** Other variables...  **********/
 unsigned long stateStartTime;			//	Used to track times for entering Vacuum/Dwell states
 unsigned long stateDebounceLimit = 30000;	//	Used to define state debounce time limit
 unsigned long vacuDebounceLimit = 1000;    //  Used to define state debounce time limit
-
-//unsigned long drainTimeout = 180000;
-unsigned long drainTimeout = 10000;   // Test
-
-const unsigned long TIME_FOR_MTR_TO_OPEN_LID = 210;
-const unsigned long PULSE_TIME = 10;
-const unsigned long DISSIPATE_TIME = 100;
 
 int buttonState;             // the current reading from the input pin
 int lastButtonState = HIGH;   // the previous reading from the input pin
@@ -64,10 +70,10 @@ const byte NUM_OF_STATES = 4;	//	Number of total states
 Adafruit_NeoPixel ledStat = Adafruit_NeoPixel(NUM_OF_PIX, NEOPIX, NEO_GRB + NEO_KHZ800);		//	Neopixel initializiation 
 
 /*************************** COLOR FOR MODES  ***************************/
-uint32_t idleLEDColor = ledStat.Color(0, 255, 0);			// Green
-uint32_t vacuumLEDColor = ledStat.Color(140, 206, 250);		// Yellow
+uint32_t idleLEDColor = ledStat.Color(0, 255, 0);           // Green
+uint32_t vacuumLEDColor = ledStat.Color(0, 0, 255);     // Blue
 uint32_t dwellLEDColor = ledStat.Color(255, 255, 255);   // White
-uint32_t drainLEDColor = ledStat.Color(255, 0, 0);		// Red
+uint32_t drainLEDColor = ledStat.Color(255, 0, 0);      // Red
 
 void setup() {
 	Serial.begin(9600);
