@@ -2,14 +2,21 @@
 #include <Adafruit_NeoPixel.h>
 
 #define DEBUG
-#define DRAIN_MTR 8
-#define VALV_ATM 7
-#define VACU_PUMP	6
-#define CAP_TCH     A6
-#define PRS_SEN 10
-#define NEOPIX  5
-#define NUM_OF_PIX 12
-#define MECH_SWT 9
+#define VALV_ATM 14
+#define VACU_PUMP	13
+#define CAP_TCH     5
+#define PRS_SEN 2
+#define NEOPIX  6 
+
+//  CAM micro switch end stops
+#define MICRO_SWT_A 3
+#define MICRO_SWT_B 4
+
+// Drain Motor H-Bridge
+#define HBRIDGE_A 10
+#define HBRIDGE_B 20
+
+#define NUM_OF_PIX 1
 
 //  Tell compiler that functions exist, just implementated later
 extern void idled();
