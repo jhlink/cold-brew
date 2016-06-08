@@ -90,7 +90,7 @@ uint32_t drainLEDColor = ledStat.Color(255, 0, 0);      // Red
 
 void setup() {
 	Serial.begin(9600);
-	pinMode(DRAIN_MTR, OUTPUT);
+//	pinMode(DRAIN_MTR, OUTPUT);
 	pinMode(VALV_ATM, OUTPUT);
 	pinMode(VACU_PUMP, OUTPUT);
 	pinMode(PRS_SEN, INPUT);
@@ -105,7 +105,7 @@ void setup() {
 	pinMode(HBRIDGE_A, OUTPUT);
 	pinMode(HBRIDGE_B, OUTPUT);
 
-	pinMode(PRESSURE, INPUT);
+//	pinMode(PRESSURE, INPUT);
 	ledStat.begin();
 }
 
@@ -270,7 +270,7 @@ void closeArmIntoClosedLidState() {
 
 float convertVoltageToPressure(int inputValue) {
     //  Convert analogValue to voltage.
-    float voltageValue = inputValue * 3.3/1024
+    float voltageValue = inputValue * 3.3/1024;
     
     //  Convert Vout voltage divider value into Vin value. 
     float result = voltageValue * 3/2.0;
