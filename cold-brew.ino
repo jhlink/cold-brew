@@ -4,17 +4,23 @@
 #define DEBUG
 #define VALV_ATM 14
 #define VACU_PUMP	13
-#define CAP_TCH     5
-#define PRS_SEN 2
+#define TACT_TCH     5
 #define NEOPIX  6 
 
 //  CAM micro switch end stops
+//	When switch is hit/pressed, returns 3v3 HIGH
+//		-- Normally Open
 #define MICRO_SWT_A 3
 #define MICRO_SWT_B 4
 
 // Drain Motor H-Bridge
 #define HBRIDGE_A 10
 #define HBRIDGE_B 20
+
+// Pressure switch transfer function
+//		Vout = Vs x (0.018 x P + .92)
+//		Converted formula is found at convertVoltageToPressure()
+#define PRESSURE	2
 
 #define NUM_OF_PIX 1
 
@@ -87,9 +93,19 @@ void setup() {
 	pinMode(DRAIN_MTR, OUTPUT);
 	pinMode(VALV_ATM, OUTPUT);
 	pinMode(VACU_PUMP, OUTPUT);
-	pinMode(PRS_SEN, INPUT_PULLUP);
-	pinMode(CAP_TCH, INPUT);
-	pinMode(MECH_SWT, INPUT_PULLUP);
+	pinMode(PRS_SEN, INPUT);
+	pinMode(TACT_TCH, INPUT);
+
+	//	Defunct
+	//pinMode(MECH_SWT, INPUT_PULLUP);
+
+	pinMode(MICRO_SWT_A, INPUT);
+	pinMode(MICRO_SWT_B, INPUT);
+
+	pinMode(HBRIDGE_A, OUTPUT);
+	pinMode(HBRIDGE_B, OUTPUT);
+
+	pinMode(PRESSURE, INPUT);
 	ledStat.begin();
 }
 
@@ -100,7 +116,7 @@ static int buttonPresses = 0;
 void loop() {
 
     // read the state of the switch into a local variable:
-    int reading = digitalRead(CAP_TCH);
+    int reading = digitalRead(TACT_TCH);
     
     // If the switch changed, due to noise or pressing:
     if (reading != lastButtonState) {
@@ -175,35 +191,85 @@ void loop() {
 }
 
 void moveArmIntoDrainOpenState() {
-	digitalWrite(DRAIN_MTR, HIGH);
-    Serial.println("PREPARING TO DRAIN -- ARM MOVING");
-	delay(TIME_FOR_MTR_TO_OPEN_LID);
-	digitalWrite(DRAIN_MTR, LOW);
+	//	At switch state ON (When CAM is pushing against 
+	//		push button) CAM is in closed state.
+	//		Default value is OFF, or logic high; switch
+	//		uses input pullup.
+	//static unsigned long currentTime = millis();
+	int microBSwtResult = digitalRead(MICRO_SWT_B);
+	Serial.println("DRAINING -- ARM OPENING");
+    Serial.print("This is switch value: ");
+    Serial.println(microBSwtResult);
+	while (microBSwtResult == HIGH) {
+		moveForwardDrainMotorSpeed(PULSE_TIME);
+		stopDrainMotor();
+
+		//digitalWrite(DRAIN_MTR, HIGH);	
+		//delay(PULSE_TIME);
+		//digitalWrite(DRAIN_MTR, LOW);
+		//delay(DISSIPATE_TIME);
+		microBSwtResult = digitalRead(MICRO_SWT_B);
+		if (microBSwtResult == LOW) {
+			Serial.println("THIS IS EVAL TO TRUE");
+		}
+	}
+    Serial.print("This is switch value 2: ");
+    Serial.println(digitalRead(MICRO_SWT_B));
+
+	stopDrainMotor();
+	//digitalWrite(DRAIN_MTR, LOW);
+
+	//digitalWrite(DRAIN_MTR, HIGH);
+    //Serial.println("PREPARING TO DRAIN -- ARM MOVING");
+	//delay(TIME_FOR_MTR_TO_OPEN_LID);
+	//digitalWrite(DRAIN_MTR, LOW);
 }
 
+// Encapsulate microswitches into closeARmIntoClosedLidState
 void closeArmIntoClosedLidState() {
 	//	At switch state ON (When CAM is pushing against 
 	//		push button) CAM is in closed state.
 	//		Default value is OFF, or logic high; switch
 	//		uses input pullup.
 	//static unsigned long currentTime = millis();
-	int mechSwitchResult = digitalRead(MECH_SWT);
-    Serial.println("POST DRAIN -- ARM CLOSING");
+	int microASwtResult = digitalRead(MICRO_SWT_A);
+	Serial.println("POST DRAIN -- ARM CLOSING");
     Serial.print("This is switch value: ");
-    Serial.println(mechSwitchResult);
-	while (mechSwitchResult == HIGH) {
-		digitalWrite(DRAIN_MTR, HIGH);	
-		delay(PULSE_TIME);
-		digitalWrite(DRAIN_MTR, LOW);
-		delay(DISSIPATE_TIME);
-		mechSwitchResult = digitalRead(MECH_SWT);
-		if (mechSwitchResult == LOW) {
+    Serial.println(microASwtResult);
+	while (microASwtResult == HIGH) {
+		moveReverseDrainMotorSpeed(PULSE_TIME);
+		stopDrainMotor();
+
+		//digitalWrite(DRAIN_MTR, HIGH);	
+		//delay(PULSE_TIME);
+		//digitalWrite(DRAIN_MTR, LOW);
+		//delay(DISSIPATE_TIME);
+		microASwtResult = digitalRead(MICRO_SWT_A);
+		if (microASwtResult == LOW) {
 			Serial.println("THIS IS EVAL TO TRUE");
 		}
 	}
     Serial.print("This is switch value 2: ");
-    Serial.println(digitalRead(MECH_SWT));
-	digitalWrite(DRAIN_MTR, LOW);
+    Serial.println(digitalRead(MICRO_SWT_B));
+
+	stopDrainMotor();
+
+	//digitalWrite(DRAIN_MTR, LOW);
+}
+
+float convertVoltageToPressure(int inputValue) {
+    //  Convert analogValue to voltage.
+    float voltageValue = inputValue * 3.3/1024
+    
+    //  Convert Vout voltage divider value into Vin value. 
+    float result = voltageValue * 3/2.0;
+
+    //  Formula is as follows
+    //      Vout = Vs * (0.018  * P + 0.92)  +- (PressureError * TempMultiplier * .018 * Vs)
+    //      Vs = 5.0 += 0.25V
+
+    float finalResult = (result - (.92 * 5.0)) / (.018 * 5.0);
+    return finalResult;
 }
 
 void setPixelRingColor(uint32_t val) {
@@ -213,11 +279,31 @@ void setPixelRingColor(uint32_t val) {
 	ledStat.show();
 }	
 
+void stopDrainMotor() { 
+	analogWrite(HBRIDGE_A, 0);
+	analogWrite(HBRIDGE_B, 0);
+}
+
+void moveForwardDrainMotorSpeed(int speed) {
+	analogWrite(HBRIDGE_A, speed);
+	analogWrite(HBRIDGE_B, 0);
+}
+
+
+void moveReverseDrainMotorSpeed(int speed) {
+	analogWrite(HBRIDGE_A, 0);
+	analogWrite(HBRIDGE_B, speed);
+}
+
 //	Pump is turned off first, pump valve closes, and finally the atm valve
 //		closes. LED status is cleared. 
 void idled() {
 	digitalWrite(VACU_PUMP, LOW);
-	digitalWrite(DRAIN_MTR, LOW);
+
+//	Due to H-Bridge, separating out motor functions for simplicity.
+//	digitalWrite(DRAIN_MTR, LOW);
+	stopDrainMotor();
+
 	digitalWrite(VALV_ATM, LOW);
 
 	setPixelRingColor(idleLEDColor);
@@ -227,9 +313,12 @@ void idled() {
 //		to be closed due to necessary safety redundancy. Displays 
 //		Yellow on LED status.
 void vacuum() {
-	digitalWrite(DRAIN_MTR, LOW);
 	digitalWrite(VACU_PUMP, HIGH);
 	digitalWrite(VALV_ATM, LOW);
+
+//	Due to H-Bridge, separating out motor functions for simplicity.
+//	digitalWrite(DRAIN_MTR, LOW);
+	stopDrainMotor();
 	   
 	setPixelRingColor(vacuumLEDColor);
 }
@@ -269,8 +358,12 @@ void vacuumUpdate() {
 //		Atm valve is ensured to be closed. Displays Red on LED status.
 void dwell() {
 	digitalWrite(VACU_PUMP, LOW);
-	digitalWrite(DRAIN_MTR, LOW);
    	digitalWrite(VALV_ATM, LOW);
+
+
+//	Due to H-Bridge, separating out motor functions for simplicity.
+//	digitalWrite(DRAIN_MTR, LOW);
+	stopDrainMotor();
 	    
 	setPixelRingColor(dwellLEDColor);
 }
