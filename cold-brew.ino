@@ -1,16 +1,25 @@
+#include <FastLED.h>
 #include <FiniteStateMachine.h>
-#include <Adafruit_NeoPixel.h>
+#include <SimbleeForMobile.h>
+
+
+// include newlib printf float support (%f used in sprintf below)
+asm(".global _printf_float");
 
 #define DEBUG
 #define VALV_ATM 14
 #define VACU_PUMP	13
 #define TACT_TCH     5
-#define NEOPIX  6 
+#define NEOPIX  6
 
 //  CAM micro switch end stops
 //	When switch is hit/pressed, returns 3v3 HIGH
 //		-- Normally Open
+
+// This is the switch to detect if the switch has open
 #define MICRO_SWT_A 3
+
+// This is the switch to detect if the switch ha closed
 #define MICRO_SWT_B 4
 
 // Drain Motor H-Bridge
@@ -22,8 +31,8 @@
 //		Converted formula is found at convertVoltageToPressure()
 #define PRS_SEN	2
 
-#define NUM_OF_PIX 1
-#define TARGET_PRESSURE -14
+#define NUM_OF_PIX 12
+#define TARGET_PRESSURE -45
 
 //  Tell compiler that functions exist, just implementated later
 extern void idled();
@@ -62,7 +71,7 @@ unsigned long setTimeLimit = 480000;		//	User defined time limit
 
 
 /********** TIMEOUT FOR DRAIN TIME **********/
-//unsigned long drainTimeout = 10000;   // Test
+//unsigned long drainTimeout = 30000;   // Test
 unsigned long drainTimeout = 240000;
 
 
@@ -80,125 +89,76 @@ long debounceDelay = 100;    // the debounce time; increase if the output flicke
 enum states {IDLED, VACU, DWLL, DRIN};
 const byte NUM_OF_STATES = 4;	//	Number of total states
 
-Adafruit_NeoPixel ledStat = Adafruit_NeoPixel(NUM_OF_PIX, NEOPIX, NEO_GRB + NEO_KHZ800);		//	Neopixel initializiation 
+CRGB ledStat[NUM_OF_PIX];
 
 /*************************** COLOR FOR MODES  ***************************/
-uint32_t idleLEDColor = ledStat.Color(0, 255, 0);           // Green
-uint32_t vacuumLEDColor = ledStat.Color(0, 0, 255);     // Blue
-uint32_t dwellLEDColor = ledStat.Color(255, 255, 255);   // White
-uint32_t drainLEDColor = ledStat.Color(255, 0, 0);      // Red
+CRGB::HTMLColorCode idleLEDColor = CRGB::Green;          // Green
+CRGB::HTMLColorCode vacuumLEDColor = CRGB::Blue;    // Blue
+CRGB::HTMLColorCode dwellLEDColor = CRGB::White;   // White
+CRGB::HTMLColorCode drainLEDColor = CRGB::Red;   // Red
 
 void setup() {
 	Serial.begin(9600);
-	pinMode(DRAIN_MTR, OUTPUT);
+//	pinMode(DRAIN_MTR, OUTPUT);
 	pinMode(VALV_ATM, OUTPUT);
 	pinMode(VACU_PUMP, OUTPUT);
 	pinMode(PRS_SEN, INPUT);
-	pinMode(TACT_TCH, INPUT);
+	pinMode(TACT_TCH, INPUT_PULLUP);
 
 	//	Defunct
 	//pinMode(MECH_SWT, INPUT_PULLUP);
 
-	pinMode(MICRO_SWT_A, INPUT);
-	pinMode(MICRO_SWT_B, INPUT);
+	pinMode(MICRO_SWT_A, INPUT_PULLUP);
+	pinMode(MICRO_SWT_B, INPUT_PULLUP);
 
 	pinMode(HBRIDGE_A, OUTPUT);
 	pinMode(HBRIDGE_B, OUTPUT);
 
-	pinMode(PRESSURE, INPUT);
-	ledStat.begin();
+//	pinMode(PRESSURE, INPUT);
+//    ledStat.begin();
+       FastLED.addLeds<NEOPIXEL, NEOPIX>(ledStat, NUM_OF_PIX);
+       FastLED.setBrightness(150);
+
+	SimbleeForMobile.advertisementData = "prisma";
+
+	SimbleeForMobile.domain = "prisma.firstbuild.com";
+
+	// establish a baseline to use the cache during development to bypass uploading
+	// the image each time
+	SimbleeForMobile.baseline = "Jun8";
+
+      // start SimbleeForMobile
+      SimbleeForMobile.begin();
 }
 
 //	Keeps track of button presses to direct button states
 //	Value only exists within this function; Value exists between iterations
 static int buttonPresses = 0; 
 
-void loop() {
+uint8_t text;
 
-    // read the state of the switch into a local variable:
-    int reading = digitalRead(TACT_TCH);
-    
-	static unsigned long currentTime = millis();
 
-    // If the switch changed, due to noise or pressing:
-    if (reading != lastButtonState) {
-        // reset the debouncing timer
-        lastDebounceTime = currentTime;
+void setPixelRingColor(CRGB val) {
+    for (int i = 0; i < NUM_OF_PIX; i++) {
+        ledStat[i] = val;
     }
-    
-    if ((currentTime - lastDebounceTime) > debounceDelay) {
-        // if the button state has changed:
-        if (reading != buttonState) {
-          buttonState = reading;
-    
-          // only toggle the LED if the new button state is HIGH
-          if (buttonState == LOW) {
-            //    Buttons used to manipulate states in SM
-            
-        
-            //  Increment buttonPresses and constrain it to [0, NUM_OF_STATES - 1]
-            buttonPresses = ++buttonPresses % NUM_OF_STATES; 
-            
-            Serial.print("This is what: ");
-            Serial.println(buttonPresses);
-            switch (buttonPresses){
-                case IDLED:
-                	Serial.println("IDLE");
-					closeArmIntoClosedLidState();
-               		stateMachine.transitionTo(idle_state);
-                	break;
-        
-                case VACU:
-                	Serial.println("VACU");
+    FastLED.show();
+}   
 
-					closeArmIntoClosedLidState();
+void stopDrainMotor() { 
+    analogWrite(HBRIDGE_A, 0);
+    analogWrite(HBRIDGE_B, 0);
+}
 
-                   	//  Begin timer for total time between Vacuum and Dwell states
-                   	startTime = currentTime; 
-					stateStartTime = currentTime;
+void moveForwardDrainMotorSpeed(int speed) {
+    analogWrite(HBRIDGE_A, speed);
+    analogWrite(HBRIDGE_B, 0);
+}
 
-					//	Ensure next button press will lead to DRAIN state.
-					buttonPresses = 2; 
 
-                    stateMachine.transitionTo(vacu_state);
-                    break;
-        
-                case DWLL:
-                    Serial.println("DWLL");
-                    stateMachine.transitionTo(drin_state);
-                    break;
-        
-                case DRIN:
-                	Serial.println("DRIN");
-					moveArmIntoDrainOpenState();
-					stateStartTime = currentTime;
-                	stateMachine.transitionTo(drin_state);
-                	break;
-            }
-          }
-        }
-    }
-
-#ifdef DEBUG
-    if ((millis() % 1000) == 0) {
-        Serial.print("Presssure (kPa): ");
-        Serial.println(convertVoltageToPressure(analogRead(PRS_SEN)));
-
-        Serial.print("MicroSwitch A : ");
-        Serial.println(digitalRead(MICRO_SWT_A));
-
-        Serial.print("MicroSwitch B : ");
-        Serial.println(digitalRead(MICRO_SWT_B));
-
-        Serial.print("Tactile Switch: ");
-        Serial.println(digitalRead(TACT_TCH));
-    }
-#endif
-
-    lastButtonState = reading;
-
-	//	Updates the SM for every loop -- APPLICATION CRITICAL
-    stateMachine.update();
+void moveReverseDrainMotorSpeed(int speed) {
+    analogWrite(HBRIDGE_A, 0);
+    analogWrite(HBRIDGE_B, speed);
 }
 
 void moveArmIntoDrainOpenState() {
@@ -207,31 +167,31 @@ void moveArmIntoDrainOpenState() {
 	//		Default value is OFF, or logic high; switch
 	//		uses input pullup.
 	//static unsigned long currentTime = millis();
-	int microBSwtResult = digitalRead(MICRO_SWT_B);
+	int microASwtResult = digitalRead(MICRO_SWT_A);
 	Serial.println("DRAINING -- ARM OPENING");
-    Serial.print("This is switch value: ");
-    Serial.println(microBSwtResult);
-	while (microBSwtResult == HIGH) {
-		moveForwardDrainMotorSpeed(PULSE_TIME);
-		stopDrainMotor();
+	Serial.print("This is switch open: ");
+	Serial.println(microASwtResult);
+	while (microASwtResult == HIGH) {
+		moveForwardDrainMotorSpeed(255);
+//		stopDrainMotor();
 
 		//digitalWrite(DRAIN_MTR, HIGH);	
 		//delay(PULSE_TIME);
 		//digitalWrite(DRAIN_MTR, LOW);
 		//delay(DISSIPATE_TIME);
-		microBSwtResult = digitalRead(MICRO_SWT_B);
-		if (microBSwtResult == LOW) {
+		microASwtResult = digitalRead(MICRO_SWT_A);
+		if (microASwtResult == LOW) {
 			Serial.println("THIS IS EVAL TO TRUE");
 		}
 	}
-    Serial.print("This is switch value 2: ");
-    Serial.println(digitalRead(MICRO_SWT_B));
+	Serial.print("This is switch close 2: ");
+	Serial.println(digitalRead(MICRO_SWT_A));
 
 	stopDrainMotor();
 	//digitalWrite(DRAIN_MTR, LOW);
 
 	//digitalWrite(DRAIN_MTR, HIGH);
-    //Serial.println("PREPARING TO DRAIN -- ARM MOVING");
+	//Serial.println("PREPARING TO DRAIN -- ARM MOVING");
 	//delay(TIME_FOR_MTR_TO_OPEN_LID);
 	//digitalWrite(DRAIN_MTR, LOW);
 }
@@ -243,25 +203,25 @@ void closeArmIntoClosedLidState() {
 	//		Default value is OFF, or logic high; switch
 	//		uses input pullup.
 	//static unsigned long currentTime = millis();
-	int microASwtResult = digitalRead(MICRO_SWT_A);
+	int microBSwtResult = digitalRead(MICRO_SWT_B);
 	Serial.println("POST DRAIN -- ARM CLOSING");
-    Serial.print("This is switch value: ");
-    Serial.println(microASwtResult);
-	while (microASwtResult == HIGH) {
-		moveReverseDrainMotorSpeed(PULSE_TIME);
-		stopDrainMotor();
+	Serial.print("This is switch close: ");
+	Serial.println(microBSwtResult);
+	while (microBSwtResult == HIGH) {
+        moveReverseDrainMotorSpeed(255);
+//		stopDrainMotor();
 
 		//digitalWrite(DRAIN_MTR, HIGH);	
 		//delay(PULSE_TIME);
 		//digitalWrite(DRAIN_MTR, LOW);
 		//delay(DISSIPATE_TIME);
-		microASwtResult = digitalRead(MICRO_SWT_A);
-		if (microASwtResult == LOW) {
+		microBSwtResult = digitalRead(MICRO_SWT_B);
+		if (microBSwtResult == LOW) {
 			Serial.println("THIS IS EVAL TO TRUE");
 		}
 	}
-    Serial.print("This is switch value 2: ");
-    Serial.println(digitalRead(MICRO_SWT_B));
+	Serial.print("This is switch close 2: ");
+	Serial.println(digitalRead(MICRO_SWT_B));
 
 	stopDrainMotor();
 
@@ -269,42 +229,20 @@ void closeArmIntoClosedLidState() {
 }
 
 float convertVoltageToPressure(int inputValue) {
-    //  Convert analogValue to voltage.
-    float voltageValue = inputValue * 3.3/1024
-    
-    //  Convert Vout voltage divider value into Vin value. 
-    float result = voltageValue * 3/2.0;
+	//  Convert analogValue to voltage.
+	float voltageValue = inputValue * 3.3/1024;
 
-    //  Formula is as follows
-    //      Vout = Vs * (0.018  * P + 0.92)  +- (PressureError * TempMultiplier * .018 * Vs)
-    //      Vs = 5.0 += 0.25V
+		//  Convert Vout voltage divider value into Vin value. 
+		float result = voltageValue * 3/2.0;
 
-    float finalResult = (result - (.92 * 5.0)) / (.018 * 5.0);
-    return finalResult;
+	//  Formula is as follows
+	//      Vout = Vs * (0.018  * P + 0.92)  +- (PressureError * TempMultiplier * .018 * Vs)
+	//      Vs = 5.0 += 0.25V
+
+	float finalResult = (result - (.92 * 5.0)) / (.018 * 5.0);
+	return finalResult;
 }
 
-void setPixelRingColor(uint32_t val) {
-	for (int i = 0; i < NUM_OF_PIX; i++) {
-		ledStat.setPixelColor(i, val);
-	}
-	ledStat.show();
-}	
-
-void stopDrainMotor() { 
-	analogWrite(HBRIDGE_A, 0);
-	analogWrite(HBRIDGE_B, 0);
-}
-
-void moveForwardDrainMotorSpeed(int speed) {
-	analogWrite(HBRIDGE_A, speed);
-	analogWrite(HBRIDGE_B, 0);
-}
-
-
-void moveReverseDrainMotorSpeed(int speed) {
-	analogWrite(HBRIDGE_A, 0);
-	analogWrite(HBRIDGE_B, speed);
-}
 
 //	Pump is turned off first, pump valve closes, and finally the atm valve
 //		closes. LED status is cleared. 
@@ -312,8 +250,8 @@ void idled() {
 	digitalWrite(VACU_PUMP, LOW);
 	digitalWrite(VALV_ATM, LOW);
 
-//	Due to H-Bridge, separating out motor functions for simplicity.
-//	digitalWrite(DRAIN_MTR, LOW);
+	//	Due to H-Bridge, separating out motor functions for simplicity.
+	//	digitalWrite(DRAIN_MTR, LOW);
 	stopDrainMotor();
 
 	setPixelRingColor(idleLEDColor);
@@ -324,12 +262,12 @@ void idled() {
 //		Yellow on LED status.
 void vacuum() {
 	digitalWrite(VACU_PUMP, HIGH);
-	digitalWrite(VALV_ATM, LOW);
+	digitalWrite(VALV_ATM, HIGH);
 
-//	Due to H-Bridge, separating out motor functions for simplicity.
-//	digitalWrite(DRAIN_MTR, LOW);
+	//	Due to H-Bridge, separating out motor functions for simplicity.
+	//	digitalWrite(DRAIN_MTR, LOW);
 	stopDrainMotor();
-	   
+
 	setPixelRingColor(vacuumLEDColor);
 }
 
@@ -340,30 +278,35 @@ void vacuumUpdate() {
 	//	Keep track of time. Kick into Drain state when time is up. 
 	//		Ensures timer has priority over pressure.
 
-	static unsigned long currentTime = millis();
+	unsigned long currentTime = millis();
 	float pressure_in_kpa = convertVoltageToPressure(analogRead(PRS_SEN));
+    Serial.print("This is the first test: ");
+    Serial.println(pressure_in_kpa <= TARGET_PRESSURE);
+
+    Serial.print("This is the second test: ");
+    Serial.println((currentTime - stateStartTime) > vacuDebounceLimit);
 	if ((currentTime - startTime) > setTimeLimit) {
 		stateStartTime = currentTime;
 
 		//	Ensure that next button press in DRAIN state will lead to IDLE
 		buttonPresses = 3;
 
-        moveArmIntoDrainOpenState();
-       	stateMachine.immediateTransitionTo(drin_state);
-   	} else if ((pressure_in_kpa <= TARGET_PRESSURE) && ((currentTime - stateStartTime) > vacuDebounceLimit)) {
-    	//	If the pressure is at or above the calibrated sensor threshold
-    	//		the pin will read LOW, setting immediate transition to
-    	//		the Dwell state. PRS_SEN is NO.
-        Serial.print("Vacuum Update:  \t");
-        Serial.println((currentTime - stateStartTime));
+		moveArmIntoDrainOpenState();
+		stateMachine.immediateTransitionTo(drin_state);
+	} else if ((pressure_in_kpa <= TARGET_PRESSURE) && ((currentTime - stateStartTime) > vacuDebounceLimit)) {
+		//	If the pressure is at or above the calibrated sensor threshold
+		//		the pin will read LOW, setting immediate transition to
+		//		the Dwell state. PRS_SEN is NO.
+		Serial.print("Vacuum Update:  \t");
+		Serial.println((currentTime - stateStartTime));
 
 		//  Resets state start time for next state.
-        stateStartTime = currentTime;
+		stateStartTime = currentTime;
 
 		//	Ensure button kicks into DRAIN state if button is pressed
 		buttonPresses = 2;
 
-    	stateMachine.immediateTransitionTo(dwll_state);
+		stateMachine.immediateTransitionTo(dwll_state);
 	}
 }
 
@@ -371,12 +314,12 @@ void vacuumUpdate() {
 //		Atm valve is ensured to be closed. Displays Red on LED status.
 void dwell() {
 	digitalWrite(VACU_PUMP, LOW);
-   	digitalWrite(VALV_ATM, LOW);
+	digitalWrite(VALV_ATM, HIGH);
 
-//	Due to H-Bridge, separating out motor functions for simplicity.
-//	digitalWrite(DRAIN_MTR, LOW);
+	//	Due to H-Bridge, separating out motor functions for simplicity.
+	//	digitalWrite(DRAIN_MTR, LOW);
 	stopDrainMotor();
-	    
+
 	setPixelRingColor(dwellLEDColor);
 }
 
@@ -385,7 +328,7 @@ void dwell() {
 void dwellUpdate() {
 	//	Keep track of time. Kick into Drain state when time is up. 
 	//		Ensures timer has priority over pressure.
-	static unsigned long currentTime = millis();
+	unsigned long currentTime = millis();
 	float pressure_in_kpa = convertVoltageToPressure(analogRead(PRS_SEN));
 	if ((currentTime- startTime) > setTimeLimit) {
 		stateStartTime = currentTime;
@@ -393,15 +336,15 @@ void dwellUpdate() {
 		//	Ensure that next button press in DRAIN state will lead to IDLE
 		buttonPresses = 3;
 
-        moveArmIntoDrainOpenState();
+		moveArmIntoDrainOpenState();
 		stateMachine.immediateTransitionTo(drin_state);
 	} else if ((pressure_in_kpa > TARGET_PRESSURE) && ((currentTime - stateStartTime) > stateDebounceLimit)) {
-    	//	If pressure is below set pressure threshold, return to 
-    	//		Vacuum state to repressurize. 
-        Serial.print("Dwell Update: \t");
-        Serial.println(currentTime - stateStartTime);
+		//	If pressure is below set pressure threshold, return to 
+		//		Vacuum state to repressurize. 
+		Serial.print("Dwell Update: \t");
+		Serial.println(currentTime - stateStartTime);
 
-        stateStartTime = currentTime;
+		stateStartTime = currentTime;
 		stateMachine.immediateTransitionTo(vacu_state);
 	}
 } 
@@ -412,17 +355,138 @@ void drain() {
 	// Close pump valve, turn off pump, and open the atmosphere valve
 	//	to equalize with external pressure.
 	digitalWrite(VACU_PUMP, LOW);
-	digitalWrite(VALV_ATM, HIGH);
+	digitalWrite(VALV_ATM, LOW);
 
 	setPixelRingColor(drainLEDColor);
 }
 
 
 void drainUpdate() {
-	static unsigned long currentTime = millis();
+	unsigned long currentTime = millis();
 	if((currentTime - stateStartTime) >  drainTimeout) {
 		closeArmIntoClosedLidState();
 		stateMachine.transitionTo(idle_state);
 	}
 }
 
+
+void loop() {
+
+    // read the state of the switch into a local variable:
+    int reading = digitalRead(TACT_TCH);
+
+    unsigned long currentTime = millis();
+    
+    // If the switch changed, due to noise or pressing:
+    if (reading != lastButtonState) {
+        // reset the debouncing timer
+        lastDebounceTime = currentTime;
+//        Serial.println("testing buttonState");
+    }
+
+    if ((currentTime - lastDebounceTime) > debounceDelay) {
+        // if the button state has changed:
+//        Serial.println("passing time test");
+        if (reading != buttonState) {
+//           Serial.println("passing button test");
+            buttonState = reading;
+
+            // only toggle the LED if the new button state is HIGH
+            if (buttonState == LOW) {
+                //    Buttons used to manipulate states in SM
+
+
+                //  Increment buttonPresses and constrain it to [0, NUM_OF_STATES - 1]
+                buttonPresses = ++buttonPresses % NUM_OF_STATES; 
+
+                Serial.print("This is what: ");
+                Serial.println(buttonPresses);
+                switch (buttonPresses){
+                    case IDLED:
+                        Serial.println("IDLE");
+                        closeArmIntoClosedLidState();
+                        stateMachine.transitionTo(idle_state);
+                        break;
+
+                    case VACU:
+                        Serial.println("VACU");
+
+                        closeArmIntoClosedLidState();
+
+                        //  Begin timer for total time between Vacuum and Dwell states
+                        startTime = currentTime; 
+                        stateStartTime = currentTime;
+
+                        //  Ensure next button press will lead to DRAIN state.
+                        buttonPresses = 2; 
+
+                        stateMachine.transitionTo(vacu_state);
+                        break;
+
+                    case DWLL:
+                        Serial.println("DWLL");
+                        stateMachine.transitionTo(drin_state);
+                        break;
+
+                    case DRIN:
+                        Serial.println("DRIN");
+                        moveArmIntoDrainOpenState();
+                        stateStartTime = currentTime;
+                        stateMachine.transitionTo(drin_state);
+                        break;
+                }
+            }
+        }
+    }
+
+#ifdef DEBUG
+    if ((millis() % 1000) == 0) {
+        Serial.print("Presssure (kPa): ");
+        Serial.println(convertVoltageToPressure(analogRead(PRS_SEN)));
+
+//        Serial.print("MicroSwitch A : ");
+//        Serial.println(digitalRead(MICRO_SWT_A));
+//
+//        Serial.print("MicroSwitch B : ");
+//        Serial.println(digitalRead(MICRO_SWT_B));
+//
+//        Serial.print("Tactile: ");
+//        Serial.println(digitalRead(TACT_TCH));
+
+    }
+#endif
+
+    lastButtonState = reading;
+
+    //  Updates the SM for every loop -- APPLICATION CRITICAL
+    stateMachine.update();
+
+    
+    if (SimbleeForMobile.updatable) {
+        char buf[16];
+        float pressureValue = convertVoltageToPressure(analogRead(PRS_SEN));
+        sprintf(buf, "%.02f", pressureValue);
+
+
+        SimbleeForMobile.updateText(text, buf);
+    }
+
+    SimbleeForMobile.process();
+}
+
+
+void update() {
+//	SimbleForMobile.updateValue(convertVoltageToPressure(analogRead(PRS_SEN)));
+}
+
+void ui() { 
+  color_t darkgray = rgb(85,85,85);
+  SimbleeForMobile.beginScreen(WHITE);
+
+  SimbleeForMobile.drawText(25, 71, "Pressure:", BLACK);
+  text = SimbleeForMobile.drawText(100, 71, "", BLACK, 20);
+  SimbleeForMobile.endScreen();
+
+//  update();
+}
+void ui_event(event_t &event) {}

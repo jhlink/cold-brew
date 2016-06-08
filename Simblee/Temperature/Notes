@@ -1,0 +1,14 @@
+-- Update function looks like it's a keyword function. 
+-- There's updateValue, updateColor, and updateText,this looks promising. 
+-- Okay, I feel good about this. We should start prioritizing the most important stuff. 
+	--	Control and report pressure
+	--	Control and report brew and drain time
+
+Implementation
+
+--	We'll probably put a stepper for the pressure, brew, and drain time. 
+--	We'll use text/labels instead of text fields, since changing them by texfield 
+
+
+Bonus
+--	It'd be cool if we can display the Prisma icon in the top left corner. 
