@@ -20,9 +20,10 @@
 // Pressure switch transfer function
 //		Vout = Vs x (0.018 x P + .92)
 //		Converted formula is found at convertVoltageToPressure()
-#define PRESSURE	2
+#define PRS_SEN	2
 
 #define NUM_OF_PIX 1
+#define TARGET_PRESSURE -14
 
 //  Tell compiler that functions exist, just implementated later
 extern void idled();
@@ -50,7 +51,6 @@ State dwll_state = State(dwell, dwellUpdate, NULL);
 
 // Drain state, with timeout of X seconds
 State drin_state = State(drain, drainUpdate, NULL);	
-
 
 FSM stateMachine = FSM(idle_state);		//	Initial SM with beginning state
 
@@ -118,13 +118,15 @@ void loop() {
     // read the state of the switch into a local variable:
     int reading = digitalRead(TACT_TCH);
     
+	static unsigned long currentTime = millis();
+
     // If the switch changed, due to noise or pressing:
     if (reading != lastButtonState) {
         // reset the debouncing timer
-        lastDebounceTime = millis();
+        lastDebounceTime = currentTime;
     }
     
-    if ((millis() - lastDebounceTime) > debounceDelay) {
+    if ((currentTime - lastDebounceTime) > debounceDelay) {
         // if the button state has changed:
         if (reading != buttonState) {
           buttonState = reading;
@@ -152,8 +154,8 @@ void loop() {
 					closeArmIntoClosedLidState();
 
                    	//  Begin timer for total time between Vacuum and Dwell states
-                   	startTime = millis(); 
-					stateStartTime = millis();
+                   	startTime = currentTime; 
+					stateStartTime = currentTime;
 
 					//	Ensure next button press will lead to DRAIN state.
 					buttonPresses = 2; 
@@ -169,7 +171,7 @@ void loop() {
                 case DRIN:
                 	Serial.println("DRIN");
 					moveArmIntoDrainOpenState();
-					stateStartTime = millis();
+					stateStartTime = currentTime;
                 	stateMachine.transitionTo(drin_state);
                 	break;
             }
@@ -178,10 +180,19 @@ void loop() {
     }
 
 #ifdef DEBUG
-//    if ((millis() % 1000) == 0) {
-//        Serial.print("This is pressure switch");
-//        Serial.println(digitalRead(PRS_SEN));
-//    }
+    if ((millis() % 1000) == 0) {
+        Serial.print("Presssure (kPa): ");
+        Serial.println(convertVoltageToPressure(analogRead(PRS_SEN)));
+
+        Serial.print("MicroSwitch A : ");
+        Serial.println(digitalRead(MICRO_SWT_A));
+
+        Serial.print("MicroSwitch B : ");
+        Serial.println(digitalRead(MICRO_SWT_B));
+
+        Serial.print("Tactile Switch: ");
+        Serial.println(digitalRead(TACT_TCH));
+    }
 #endif
 
     lastButtonState = reading;
@@ -299,12 +310,11 @@ void moveReverseDrainMotorSpeed(int speed) {
 //		closes. LED status is cleared. 
 void idled() {
 	digitalWrite(VACU_PUMP, LOW);
+	digitalWrite(VALV_ATM, LOW);
 
 //	Due to H-Bridge, separating out motor functions for simplicity.
 //	digitalWrite(DRAIN_MTR, LOW);
 	stopDrainMotor();
-
-	digitalWrite(VALV_ATM, LOW);
 
 	setPixelRingColor(idleLEDColor);
 }
@@ -329,23 +339,26 @@ void vacuum() {
 void vacuumUpdate() {
 	//	Keep track of time. Kick into Drain state when time is up. 
 	//		Ensures timer has priority over pressure.
-	if ((millis() - startTime) > setTimeLimit) {
-		stateStartTime = millis();
+
+	static unsigned long currentTime = millis();
+	float pressure_in_kpa = convertVoltageToPressure(analogRead(PRS_SEN));
+	if ((currentTime - startTime) > setTimeLimit) {
+		stateStartTime = currentTime;
 
 		//	Ensure that next button press in DRAIN state will lead to IDLE
 		buttonPresses = 3;
 
         moveArmIntoDrainOpenState();
        	stateMachine.immediateTransitionTo(drin_state);
-   	} else if ((digitalRead(PRS_SEN) == LOW) && ((millis() - stateStartTime) > vacuDebounceLimit)) {
+   	} else if ((pressure_in_kpa <= TARGET_PRESSURE) && ((currentTime - stateStartTime) > vacuDebounceLimit)) {
     	//	If the pressure is at or above the calibrated sensor threshold
     	//		the pin will read LOW, setting immediate transition to
     	//		the Dwell state. PRS_SEN is NO.
         Serial.print("Vacuum Update:  \t");
-        Serial.println((millis() - stateStartTime));
+        Serial.println((currentTime - stateStartTime));
 
 		//  Resets state start time for next state.
-        stateStartTime = millis();
+        stateStartTime = currentTime;
 
 		//	Ensure button kicks into DRAIN state if button is pressed
 		buttonPresses = 2;
@@ -360,7 +373,6 @@ void dwell() {
 	digitalWrite(VACU_PUMP, LOW);
    	digitalWrite(VALV_ATM, LOW);
 
-
 //	Due to H-Bridge, separating out motor functions for simplicity.
 //	digitalWrite(DRAIN_MTR, LOW);
 	stopDrainMotor();
@@ -373,25 +385,26 @@ void dwell() {
 void dwellUpdate() {
 	//	Keep track of time. Kick into Drain state when time is up. 
 	//		Ensures timer has priority over pressure.
-	if ((millis() - startTime) > setTimeLimit) {
-		stateStartTime = millis();
+	static unsigned long currentTime = millis();
+	float pressure_in_kpa = convertVoltageToPressure(analogRead(PRS_SEN));
+	if ((currentTime- startTime) > setTimeLimit) {
+		stateStartTime = currentTime;
 
 		//	Ensure that next button press in DRAIN state will lead to IDLE
 		buttonPresses = 3;
 
         moveArmIntoDrainOpenState();
 		stateMachine.immediateTransitionTo(drin_state);
-	} else if ((digitalRead(PRS_SEN) == HIGH) && ((millis() - stateStartTime) > stateDebounceLimit)) {
+	} else if ((pressure_in_kpa > TARGET_PRESSURE) && ((currentTime - stateStartTime) > stateDebounceLimit)) {
     	//	If pressure is below set pressure threshold, return to 
     	//		Vacuum state to repressurize. 
         Serial.print("Dwell Update: \t");
-        Serial.println((millis() - stateStartTime));
+        Serial.println(currentTime - stateStartTime);
 
-        stateStartTime = millis();
+        stateStartTime = currentTime;
 		stateMachine.immediateTransitionTo(vacu_state);
 	}
 } 
-
 
 //	Pump is turned off first, then the pump valve closes. The atm valve
 //		opens, and displays Green as the LED status.
@@ -399,7 +412,6 @@ void drain() {
 	// Close pump valve, turn off pump, and open the atmosphere valve
 	//	to equalize with external pressure.
 	digitalWrite(VACU_PUMP, LOW);
-	//digitalWrite(DRAIN_MTR, LOW);
 	digitalWrite(VALV_ATM, HIGH);
 
 	setPixelRingColor(drainLEDColor);
@@ -407,7 +419,8 @@ void drain() {
 
 
 void drainUpdate() {
-	if((millis() - stateStartTime) >  drainTimeout) {
+	static unsigned long currentTime = millis();
+	if((currentTime - stateStartTime) >  drainTimeout) {
 		closeArmIntoClosedLidState();
 		stateMachine.transitionTo(idle_state);
 	}
