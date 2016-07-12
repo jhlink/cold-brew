@@ -32,7 +32,9 @@ asm(".global _printf_float");
 #define PRS_SEN	2
 
 #define NUM_OF_PIX 12
-#define TARGET_PRESSURE -45
+
+
+signed int TARGET_PRESSURE = -45;
 
 //  Tell compiler that functions exist, just implementated later
 extern void idled();
@@ -73,6 +75,7 @@ unsigned long setTimeLimit = 480000;		//	User defined time limit
 /********** TIMEOUT FOR DRAIN TIME **********/
 //unsigned long drainTimeout = 30000;   // Test
 unsigned long drainTimeout = 240000;
+unsigned long repressurizeTime = 1000;
 
 
 /********** Other variables...  **********/
@@ -291,7 +294,6 @@ void vacuumUpdate() {
 		//	Ensure that next button press in DRAIN state will lead to IDLE
 		buttonPresses = 3;
 
-		moveArmIntoDrainOpenState();
 		stateMachine.immediateTransitionTo(drin_state);
 	} else if ((pressure_in_kpa <= TARGET_PRESSURE) && ((currentTime - stateStartTime) > vacuDebounceLimit)) {
 		//	If the pressure is at or above the calibrated sensor threshold
@@ -336,7 +338,6 @@ void dwellUpdate() {
 		//	Ensure that next button press in DRAIN state will lead to IDLE
 		buttonPresses = 3;
 
-		moveArmIntoDrainOpenState();
 		stateMachine.immediateTransitionTo(drin_state);
 	} else if ((pressure_in_kpa > TARGET_PRESSURE) && ((currentTime - stateStartTime) > stateDebounceLimit)) {
 		//	If pressure is below set pressure threshold, return to 
@@ -356,6 +357,11 @@ void drain() {
 	//	to equalize with external pressure.
 	digitalWrite(VACU_PUMP, LOW);
 	digitalWrite(VALV_ATM, LOW);
+	
+	unsigned long currentTime = millis();
+	if ((currentTime - stateStartTime) > repressurizeTime) {
+  	moveArmIntoDrainOpenState();
+	}
 
 	setPixelRingColor(drainLEDColor);
 }
@@ -363,7 +369,7 @@ void drain() {
 
 void drainUpdate() {
 	unsigned long currentTime = millis();
-	if((currentTime - stateStartTime) >  drainTimeout) {
+	if ((currentTime - stateStartTime) >  drainTimeout) {
 		closeArmIntoClosedLidState();
 		stateMachine.transitionTo(idle_state);
 	}
@@ -430,7 +436,6 @@ void loop() {
 
                     case DRIN:
                         Serial.println("DRIN");
-                        moveArmIntoDrainOpenState();
                         stateStartTime = currentTime;
                         stateMachine.transitionTo(drin_state);
                         break;
@@ -463,12 +468,7 @@ void loop() {
 
     
     if (SimbleeForMobile.updatable) {
-        char buf[16];
-        float pressureValue = convertVoltageToPressure(analogRead(PRS_SEN));
-        sprintf(buf, "%.02f", pressureValue);
-
-
-        SimbleeForMobile.updateText(text, buf);
+				update();
     }
 
     SimbleeForMobile.process();
@@ -477,16 +477,49 @@ void loop() {
 
 void update() {
 //	SimbleForMobile.updateValue(convertVoltageToPressure(analogRead(PRS_SEN)));
+        char buf[16];
+        float pressureValue = convertVoltageToPressure(analogRead(PRS_SEN));
+        sprintf(buf, "%.02f", pressureValue);
+
+        SimbleeForMobile.updateText(text, buf);
+}
+
+
+void SimbleeForMobile_onConnect()
+{
+  first_sample = true;
 }
 
 void ui() { 
   color_t darkgray = rgb(85,85,85);
   SimbleeForMobile.beginScreen(WHITE);
 
+  SimbleeForMobile.drawText(25, 71, "Brew Time:", BLACK);
+  text = SimbleeForMobile.drawTextField(100, 71, 50, "");
+
+  SimbleeForMobile.drawText(25, 71, "Drain Time:", BLACK);
+  text = SimbleeForMobile.drawTextField(100, 71, 50, "");
+
   SimbleeForMobile.drawText(25, 71, "Pressure:", BLACK);
-  text = SimbleeForMobile.drawText(100, 71, "", BLACK, 20);
+  text = SimbleeForMobile.drawTextField(100, 71, 50, "");
+
+  SimbleeForMobile.drawText(25, 71, "Vacuum:", BLACK);
+	SimbleeForMobile.drawSwitch(25, 71);
+
+	text = SimbleeForMobile.drawText("25", "71", "brewig", BLUE, 20)
+
+	saveButton = SimbleeForMobile.drawButton(25, 71, "Save to Device");
+
   SimbleeForMobile.endScreen();
 
-//  update();
+  update();
 }
+
 void ui_event(event_t &event) {}
+
+void saveToDevice() {
+	setTimeLimit;
+	drainTimeout;
+	TARGET_PRESSURE;
+	vacuumState;
+}
