@@ -2,7 +2,6 @@
 #include <FiniteStateMachine.h>
 #include <SimbleeForMobile.h>
 
-
 // include newlib printf float support (%f used in sprintf below)
 asm(".global _printf_float");
 
@@ -32,7 +31,6 @@ asm(".global _printf_float");
 #define PRS_SEN	2
 
 #define NUM_OF_PIX 12
-
 
 signed int TARGET_PRESSURE = -45;
 
@@ -88,9 +86,26 @@ int lastButtonState = HIGH;   // the previous reading from the input pin
 long lastDebounceTime = 0;  // the last time the output pin was toggled
 long debounceDelay = 100;    // the debounce time; increase if the output flickers
 
+//	Keeps track of button presses to direct button states
+//	Value only exists within this function; Value exists between iterations
+static int buttonPresses = 0; 
+
 // Different states of the machine: Idle, Vacuum, Dwell, and Drain
 enum states {IDLED, VACU, DWLL, DRIN};
 const byte NUM_OF_STATES = 4;	//	Number of total states
+
+//	Simblee asset IDs
+uint8_t	pressureDataLabel;
+uint8_t brewTimeField;
+uint8_t vacuumSwitch;
+uint8_t saveButton;
+uint8_t saveButtonConfirmState;
+
+//	Simblee temporry values for event
+//		NOTE: Values from assets are only sent through events when the assets
+//			themselves change. Reducing what data needs to be sent, but I don't think
+//			data can be requested over the BLE line.
+unsigned long tempBrewTimeLimit = 0;
 
 CRGB ledStat[NUM_OF_PIX];
 
@@ -102,7 +117,7 @@ CRGB::HTMLColorCode drainLEDColor = CRGB::Red;   // Red
 
 void setup() {
 	Serial.begin(9600);
-//	pinMode(DRAIN_MTR, OUTPUT);
+	//	pinMode(DRAIN_MTR, OUTPUT);
 	pinMode(VALV_ATM, OUTPUT);
 	pinMode(VACU_PUMP, OUTPUT);
 	pinMode(PRS_SEN, INPUT);
@@ -117,12 +132,12 @@ void setup() {
 	pinMode(HBRIDGE_A, OUTPUT);
 	pinMode(HBRIDGE_B, OUTPUT);
 
-//	pinMode(PRESSURE, INPUT);
-//    ledStat.begin();
-       FastLED.addLeds<NEOPIXEL, NEOPIX>(ledStat, NUM_OF_PIX);
-       FastLED.setBrightness(150);
+	//	pinMode(PRESSURE, INPUT);
+	//    ledStat.begin();
+	FastLED.addLeds<NEOPIXEL, NEOPIX>(ledStat, NUM_OF_PIX);
+	FastLED.setBrightness(150);
 
-	SimbleeForMobile.advertisementData = "prisma";
+	SimbleeForMobile.advertisementData = "test";
 
 	SimbleeForMobile.domain = "prisma.firstbuild.com";
 
@@ -130,38 +145,32 @@ void setup() {
 	// the image each time
 	SimbleeForMobile.baseline = "Jun8";
 
-      // start SimbleeForMobile
-      SimbleeForMobile.begin();
+	// start SimbleeForMobile
+	SimbleeForMobile.begin();
 }
-
-//	Keeps track of button presses to direct button states
-//	Value only exists within this function; Value exists between iterations
-static int buttonPresses = 0; 
-
-uint8_t text;
 
 
 void setPixelRingColor(CRGB val) {
-    for (int i = 0; i < NUM_OF_PIX; i++) {
-        ledStat[i] = val;
-    }
-    FastLED.show();
+	for (int i = 0; i < NUM_OF_PIX; i++) {
+		ledStat[i] = val;
+	}
+	FastLED.show();
 }   
 
 void stopDrainMotor() { 
-    analogWrite(HBRIDGE_A, 0);
-    analogWrite(HBRIDGE_B, 0);
+	analogWrite(HBRIDGE_A, 0);
+	analogWrite(HBRIDGE_B, 0);
 }
 
 void moveForwardDrainMotorSpeed(int speed) {
-    analogWrite(HBRIDGE_A, speed);
-    analogWrite(HBRIDGE_B, 0);
+	analogWrite(HBRIDGE_A, speed);
+	analogWrite(HBRIDGE_B, 0);
 }
 
 
 void moveReverseDrainMotorSpeed(int speed) {
-    analogWrite(HBRIDGE_A, 0);
-    analogWrite(HBRIDGE_B, speed);
+	analogWrite(HBRIDGE_A, 0);
+	analogWrite(HBRIDGE_B, speed);
 }
 
 void moveArmIntoDrainOpenState() {
@@ -176,7 +185,7 @@ void moveArmIntoDrainOpenState() {
 	Serial.println(microASwtResult);
 	while (microASwtResult == HIGH) {
 		moveForwardDrainMotorSpeed(255);
-//		stopDrainMotor();
+		//		stopDrainMotor();
 
 		//digitalWrite(DRAIN_MTR, HIGH);	
 		//delay(PULSE_TIME);
@@ -211,8 +220,8 @@ void closeArmIntoClosedLidState() {
 	Serial.print("This is switch close: ");
 	Serial.println(microBSwtResult);
 	while (microBSwtResult == HIGH) {
-        moveReverseDrainMotorSpeed(255);
-//		stopDrainMotor();
+		moveReverseDrainMotorSpeed(255);
+		//		stopDrainMotor();
 
 		//digitalWrite(DRAIN_MTR, HIGH);	
 		//delay(PULSE_TIME);
@@ -235,8 +244,8 @@ float convertVoltageToPressure(int inputValue) {
 	//  Convert analogValue to voltage.
 	float voltageValue = inputValue * 3.3/1024;
 
-		//  Convert Vout voltage divider value into Vin value. 
-		float result = voltageValue * 3/2.0;
+	//  Convert Vout voltage divider value into Vin value. 
+	float result = voltageValue * 3/2.0;
 
 	//  Formula is as follows
 	//      Vout = Vs * (0.018  * P + 0.92)  +- (PressureError * TempMultiplier * .018 * Vs)
@@ -250,6 +259,7 @@ float convertVoltageToPressure(int inputValue) {
 //	Pump is turned off first, pump valve closes, and finally the atm valve
 //		closes. LED status is cleared. 
 void idled() {
+	resetSaveButtonConfirmLabel();
 	digitalWrite(VACU_PUMP, LOW);
 	digitalWrite(VALV_ATM, LOW);
 
@@ -283,11 +293,11 @@ void vacuumUpdate() {
 
 	unsigned long currentTime = millis();
 	float pressure_in_kpa = convertVoltageToPressure(analogRead(PRS_SEN));
-    Serial.print("This is the first test: ");
-    Serial.println(pressure_in_kpa <= TARGET_PRESSURE);
+	Serial.print("This is the first test: ");
+	Serial.println(pressure_in_kpa <= TARGET_PRESSURE);
 
-    Serial.print("This is the second test: ");
-    Serial.println((currentTime - stateStartTime) > vacuDebounceLimit);
+	Serial.print("This is the second test: ");
+	Serial.println((currentTime - stateStartTime) > vacuDebounceLimit);
 	if ((currentTime - startTime) > setTimeLimit) {
 		stateStartTime = currentTime;
 
@@ -357,11 +367,6 @@ void drain() {
 	//	to equalize with external pressure.
 	digitalWrite(VACU_PUMP, LOW);
 	digitalWrite(VALV_ATM, LOW);
-	
-	unsigned long currentTime = millis();
-	if ((currentTime - stateStartTime) > repressurizeTime) {
-  	moveArmIntoDrainOpenState();
-	}
 
 	setPixelRingColor(drainLEDColor);
 }
@@ -373,153 +378,200 @@ void drainUpdate() {
 		closeArmIntoClosedLidState();
 		stateMachine.transitionTo(idle_state);
 	}
+
+	//	Creates delay between atmo valve and vacuum pump.
+	if ((currentTime - stateStartTime) > repressurizeTime) {
+		moveArmIntoDrainOpenState();
+	}
+
+
 }
 
+void update() {
+  // Providing update to what the value of the Pressure is in kPa
+  //  SimbleForMobile.updateValue(convertVoltageToPressure(analogRead(PRS_SEN)));
+  char buf[16];
+  float pressureValue = convertVoltageToPressure(analogRead(PRS_SEN));
+  sprintf(buf, "%.02f", pressureValue);
+  SimbleeForMobile.updateText(pressureDataLabel, buf);
+
+  //  Need to provide similar update for brew time.
+
+  memset(buf, 0, sizeof(buf));
+  sprintf(buf, "%f Minutes", setTimeLimit / 60000.0);
+  SimbleeForMobile.updateText(brewTimeField, buf);
+}
 
 void loop() {
 
-    // read the state of the switch into a local variable:
-    int reading = digitalRead(TACT_TCH);
+	// read the state of the switch into a local variable:
+	int reading = digitalRead(TACT_TCH);
 
-    unsigned long currentTime = millis();
-    
-    // If the switch changed, due to noise or pressing:
-    if (reading != lastButtonState) {
-        // reset the debouncing timer
-        lastDebounceTime = currentTime;
-//        Serial.println("testing buttonState");
-    }
+	unsigned long currentTime = millis();
 
-    if ((currentTime - lastDebounceTime) > debounceDelay) {
-        // if the button state has changed:
-//        Serial.println("passing time test");
-        if (reading != buttonState) {
-//           Serial.println("passing button test");
-            buttonState = reading;
+	// If the switch changed, due to noise or pressing:
+	if (reading != lastButtonState) {
+		// reset the debouncing timer
+		lastDebounceTime = currentTime;
+		//        Serial.println("testing buttonState");
+	}
 
-            // only toggle the LED if the new button state is HIGH
-            if (buttonState == LOW) {
-                //    Buttons used to manipulate states in SM
+	if ((currentTime - lastDebounceTime) > debounceDelay) {
+		// if the button state has changed:
+		//        Serial.println("passing time test");
+		if (reading != buttonState) {
+			//           Serial.println("passing button test");
+			buttonState = reading;
+
+			// only toggle the LED if the new button state is HIGH
+			if (buttonState == LOW) {
+				//    Buttons used to manipulate states in SM
 
 
-                //  Increment buttonPresses and constrain it to [0, NUM_OF_STATES - 1]
-                buttonPresses = ++buttonPresses % NUM_OF_STATES; 
+				//  Increment buttonPresses and constrain it to [0, NUM_OF_STATES - 1]
+				buttonPresses = ++buttonPresses % NUM_OF_STATES; 
 
-                Serial.print("This is what: ");
-                Serial.println(buttonPresses);
-                switch (buttonPresses){
-                    case IDLED:
-                        Serial.println("IDLE");
-                        closeArmIntoClosedLidState();
-                        stateMachine.transitionTo(idle_state);
-                        break;
+				Serial.print("This is what: ");
+				Serial.println(buttonPresses);
+				switch (buttonPresses){
+					case IDLED:
+						Serial.println("IDLE");
+						closeArmIntoClosedLidState();
+						stateMachine.transitionTo(idle_state);
+						break;
 
-                    case VACU:
-                        Serial.println("VACU");
+					case VACU:
+						Serial.println("VACU");
 
-                        closeArmIntoClosedLidState();
+						closeArmIntoClosedLidState();
 
-                        //  Begin timer for total time between Vacuum and Dwell states
-                        startTime = currentTime; 
-                        stateStartTime = currentTime;
+						//  Begin timer for total time between Vacuum and Dwell states
+						startTime = currentTime; 
+						stateStartTime = currentTime;
 
-                        //  Ensure next button press will lead to DRAIN state.
-                        buttonPresses = 2; 
+						//  Ensure next button press will lead to DRAIN state.
+						buttonPresses = 2; 
 
-                        stateMachine.transitionTo(vacu_state);
-                        break;
+						stateMachine.transitionTo(vacu_state);
+						break;
 
-                    case DWLL:
-                        Serial.println("DWLL");
-                        stateMachine.transitionTo(drin_state);
-                        break;
+					case DWLL:
+						Serial.println("DWLL");
+						stateMachine.transitionTo(drin_state);
+						break;
 
-                    case DRIN:
-                        Serial.println("DRIN");
-                        stateStartTime = currentTime;
-                        stateMachine.transitionTo(drin_state);
-                        break;
-                }
-            }
-        }
-    }
+					case DRIN:
+						Serial.println("DRIN");
+						stateStartTime = currentTime;
+						stateMachine.transitionTo(drin_state);
+						break;
+				}
+			}
+		}
+	}
 
 #ifdef DEBUG
-    if ((millis() % 1000) == 0) {
-        Serial.print("Presssure (kPa): ");
-        Serial.println(convertVoltageToPressure(analogRead(PRS_SEN)));
+	if ((millis() % 1000) == 0) {
+		Serial.print("Presssure (kPa): ");
+		Serial.println(convertVoltageToPressure(analogRead(PRS_SEN)));
+    
 
-//        Serial.print("MicroSwitch A : ");
-//        Serial.println(digitalRead(MICRO_SWT_A));
-//
-//        Serial.print("MicroSwitch B : ");
-//        Serial.println(digitalRead(MICRO_SWT_B));
-//
-//        Serial.print("Tactile: ");
-//        Serial.println(digitalRead(TACT_TCH));
+		//        Serial.print("MicroSwitch A : ");
+		//        Serial.println(digitalRead(MICRO_SWT_A));
+		//
+		//        Serial.print("MicroSwitch B : ");
+		//        Serial.println(digitalRead(MICRO_SWT_B));
+		//
+		//        Serial.print("Tactile: ");
+		//        Serial.println(digitalRead(TACT_TCH));
 
-    }
+	}
 #endif
 
-    lastButtonState = reading;
+	lastButtonState = reading;
 
-    //  Updates the SM for every loop -- APPLICATION CRITICAL
-    stateMachine.update();
+	//  Updates the SM for every loop -- APPLICATION CRITICAL
+	stateMachine.update();
 
-    
-    if (SimbleeForMobile.updatable) {
-				update();
-    }
 
-    SimbleeForMobile.process();
+	if (SimbleeForMobile.updatable) {
+		update();
+	}
+
+	SimbleeForMobile.process();
 }
 
 
-void update() {
-//	SimbleForMobile.updateValue(convertVoltageToPressure(analogRead(PRS_SEN)));
-        char buf[16];
-        float pressureValue = convertVoltageToPressure(analogRead(PRS_SEN));
-        sprintf(buf, "%.02f", pressureValue);
 
-        SimbleeForMobile.updateText(text, buf);
+
+void updateSaveButtonConfirmLabel() {
+	//	Notifying user of change in variable values.
+	if (stateMachine.isInState(idle_state)) {
+		setTimeLimit = tempBrewTimeLimit;
+		Serial.print("This is new time ");
+    Serial.println(setTimeLimit);
+		SimbleeForMobile.updateText(saveButtonConfirmState, "SAVED TO MEMORY");
+	} else {
+		SimbleeForMobile.updateText(saveButtonConfirmState, "ERR -- NOT IN IDLE");
+	}
 }
 
-
-void SimbleeForMobile_onConnect()
-{
-  first_sample = true;
+void resetSaveButtonConfirmLabel() {
+	// Providing update to what the value of the Pressure is in kPa
+	//	SimbleForMobile.updateValue(convertVoltageToPressure(analogRead(PRS_SEN)));
+	SimbleeForMobile.updateText(saveButtonConfirmState, "READY");
 }
 
 void ui() { 
-  color_t darkgray = rgb(85,85,85);
-  SimbleeForMobile.beginScreen(WHITE);
+	color_t darkgray = rgb(85,85,85);
+	SimbleeForMobile.beginScreen(darkgray);
 
-  SimbleeForMobile.drawText(25, 71, "Brew Time:", BLACK);
-  text = SimbleeForMobile.drawTextField(100, 71, 50, "");
+	SimbleeForMobile.drawText(25, 75, "Brew Time:", BLACK);
+	brewTimeField = SimbleeForMobile.drawTextField(100, 75, 50, "dd");
 
-  SimbleeForMobile.drawText(25, 71, "Drain Time:", BLACK);
-  text = SimbleeForMobile.drawTextField(100, 71, 50, "");
+	//	Drain time updating feature
+	//	SimbleeForMobile.drawText(25, 71, "Drain Time:", BLACK);
+	//	text = SimbleeForMobile.drawTextField(100, 71, 50, "");
 
-  SimbleeForMobile.drawText(25, 71, "Pressure:", BLACK);
-  text = SimbleeForMobile.drawTextField(100, 71, 50, "");
+	SimbleeForMobile.drawText(25, 150, "Pressure:", BLACK);
+	pressureDataLabel = SimbleeForMobile.drawTextField(100, 150, 50, "dd");
 
-  SimbleeForMobile.drawText(25, 71, "Vacuum:", BLACK);
-	SimbleeForMobile.drawSwitch(25, 71);
+//	//	Probably will disable this for this rev.
+//	SimbleeForMobile.drawText(25, 200, "(NOT IMPLEMENTED) Vacuum:", BLACK);
+//	vacuumSwitch = SimbleeForMobile.drawSwitch(100, 230);
 
-	text = SimbleeForMobile.drawText("25", "71", "brewig", BLUE, 20)
+	saveButton = SimbleeForMobile.drawButton(50, 250, 75, "Save to Device");
+	saveButtonConfirmState = SimbleeForMobile.drawText(50, 250, "SUBMIT BTN FDBK", BLUE, 20);
 
-	saveButton = SimbleeForMobile.drawButton(25, 71, "Save to Device");
+	SimbleeForMobile.endScreen();
 
-  SimbleeForMobile.endScreen();
-
-  update();
+	update();
 }
 
-void ui_event(event_t &event) {}
-
-void saveToDevice() {
-	setTimeLimit;
-	drainTimeout;
-	TARGET_PRESSURE;
-	vacuumState;
+void ui_event(event_t &event)
+{
+//	handleTextFieldEvents(event);
+//	handleButtonScreenEvents(event);
 }
+
+void handleTextFieldEvents(event_t &event)
+{
+  if(event.id == brewTimeField) {
+		tempBrewTimeLimit = event.value;
+  } 
+}
+
+void handleButtonScreenEvents(event_t &event)
+{
+  if(event.id == saveButton && event.type == EVENT_RELEASE) {
+		updateSaveButtonConfirmLabel();
+  } 
+}
+
+//	This will be a helper in code refactoring later to simplying some code blocks.
+//void saveToDevice() {
+//	setTimeLimit;
+//	drainTimeout;
+//	TARGET_PRESSURE;
+//	vacuumState;
+//}
