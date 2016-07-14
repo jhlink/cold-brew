@@ -101,6 +101,8 @@ uint8_t vacuumSwitch;
 uint8_t saveButton;
 uint8_t saveButtonConfirmState;
 
+bool buttonTest = false;
+
 //	Simblee temporry values for event
 //		NOTE: Values from assets are only sent through events when the assets
 //			themselves change. Reducing what data needs to be sent, but I don't think
@@ -137,16 +139,29 @@ void setup() {
 	FastLED.addLeds<NEOPIXEL, NEOPIX>(ledStat, NUM_OF_PIX);
 	FastLED.setBrightness(150);
 
-	SimbleeForMobile.advertisementData = "test";
+	SimbleeForMobile.advertisementData = "prismav2";
 
 	SimbleeForMobile.domain = "prisma.firstbuild.com";
 
 	// establish a baseline to use the cache during development to bypass uploading
 	// the image each time
-	SimbleeForMobile.baseline = "Jun8";
+	SimbleeForMobile.baseline = "Jul14";
 
 	// start SimbleeForMobile
 	SimbleeForMobile.begin();
+}
+
+void resetSaveButtonConfirmLabel() {
+    // Providing update to what the value of the Pressure is in kPa
+    //  SimbleForMobile.updateValue(convertVoltageToPressure(analogRead(PRS_SEN)));
+    SimbleeForMobile.updateText(saveButtonConfirmState, "READY");
+}
+
+
+void ignoreSaveButtonConfirmLabel() {
+    // Providing update to what the value of the Pressure is in kPa
+    //  SimbleForMobile.updateValue(convertVoltageToPressure(analogRead(PRS_SEN)));
+    SimbleeForMobile.updateText(saveButtonConfirmState, "BREW BABY BREW");
 }
 
 
@@ -255,11 +270,11 @@ float convertVoltageToPressure(int inputValue) {
 	return finalResult;
 }
 
-
 //	Pump is turned off first, pump valve closes, and finally the atm valve
 //		closes. LED status is cleared. 
 void idled() {
-	resetSaveButtonConfirmLabel();
+    
+    closeArmIntoClosedLidState();
 	digitalWrite(VACU_PUMP, LOW);
 	digitalWrite(VALV_ATM, LOW);
 
@@ -376,6 +391,7 @@ void drainUpdate() {
 	unsigned long currentTime = millis();
 	if ((currentTime - stateStartTime) >  drainTimeout) {
 		closeArmIntoClosedLidState();
+        resetSaveButtonConfirmLabel();
 		stateMachine.transitionTo(idle_state);
 	}
 
@@ -383,23 +399,32 @@ void drainUpdate() {
 	if ((currentTime - stateStartTime) > repressurizeTime) {
 		moveArmIntoDrainOpenState();
 	}
-
-
 }
+
+
 
 void update() {
   // Providing update to what the value of the Pressure is in kPa
   //  SimbleForMobile.updateValue(convertVoltageToPressure(analogRead(PRS_SEN)));
+
   char buf[16];
-  float pressureValue = convertVoltageToPressure(analogRead(PRS_SEN));
-  sprintf(buf, "%.02f", pressureValue);
-  SimbleeForMobile.updateText(pressureDataLabel, buf);
+
+    static unsigned long stateStartTime = millis();
+    //  Creates staggers write to app.
+    if ((millis() - stateStartTime) > 250) {
+      float pressureValue = convertVoltageToPressure(analogRead(PRS_SEN));
+      sprintf(buf, "%.02f", pressureValue);
+      stateStartTime = millis();
+      SimbleeForMobile.updateText(pressureDataLabel, buf);
+    }
+
 
   //  Need to provide similar update for brew time.
-
-  memset(buf, 0, sizeof(buf));
-  sprintf(buf, "%f Minutes", setTimeLimit / 60000.0);
-  SimbleeForMobile.updateText(brewTimeField, buf);
+  if (!stateMachine.isInState(idle_state)) {
+      memset(buf, 0, sizeof(buf));
+//      sprintf(buf, "%d min.", setTimeLimit);
+      SimbleeForMobile.updateValue(brewTimeField, setTimeLimit / 1000);
+  }
 }
 
 void loop() {
@@ -436,7 +461,7 @@ void loop() {
 				switch (buttonPresses){
 					case IDLED:
 						Serial.println("IDLE");
-						closeArmIntoClosedLidState();
+                        resetSaveButtonConfirmLabel();
 						stateMachine.transitionTo(idle_state);
 						break;
 
@@ -444,6 +469,7 @@ void loop() {
 						Serial.println("VACU");
 
 						closeArmIntoClosedLidState();
+                        ignoreSaveButtonConfirmLabel();
 
 						//  Begin timer for total time between Vacuum and Dwell states
 						startTime = currentTime; 
@@ -501,72 +527,70 @@ void loop() {
 	SimbleeForMobile.process();
 }
 
-
-
-
 void updateSaveButtonConfirmLabel() {
 	//	Notifying user of change in variable values.
-	if (stateMachine.isInState(idle_state)) {
-		setTimeLimit = tempBrewTimeLimit;
+	if (stateMachine.isInState(idle_state) || buttonTest) {
+        buttonTest = false;
+		setTimeLimit = tempBrewTimeLimit * 1000;
 		Serial.print("This is new time ");
-    Serial.println(setTimeLimit);
+        Serial.println(setTimeLimit / 1000);
 		SimbleeForMobile.updateText(saveButtonConfirmState, "SAVED TO MEMORY");
 	} else {
 		SimbleeForMobile.updateText(saveButtonConfirmState, "ERR -- NOT IN IDLE");
 	}
 }
 
-void resetSaveButtonConfirmLabel() {
-	// Providing update to what the value of the Pressure is in kPa
-	//	SimbleForMobile.updateValue(convertVoltageToPressure(analogRead(PRS_SEN)));
-	SimbleeForMobile.updateText(saveButtonConfirmState, "READY");
-}
-
 void ui() { 
 	color_t darkgray = rgb(85,85,85);
 	SimbleeForMobile.beginScreen(darkgray);
 
-	SimbleeForMobile.drawText(25, 75, "Brew Time:", BLACK);
-	brewTimeField = SimbleeForMobile.drawTextField(100, 75, 50, "dd");
+	SimbleeForMobile.drawText(25, 75, "Brew Time (sec.):", BLACK);
+	brewTimeField = SimbleeForMobile.drawTextField(125, 70, 150, setTimeLimit / 1000, "INPUT");
 
 	//	Drain time updating feature
 	//	SimbleeForMobile.drawText(25, 71, "Drain Time:", BLACK);
 	//	text = SimbleeForMobile.drawTextField(100, 71, 50, "");
 
 	SimbleeForMobile.drawText(25, 150, "Pressure:", BLACK);
-	pressureDataLabel = SimbleeForMobile.drawTextField(100, 150, 50, "dd");
+	pressureDataLabel = SimbleeForMobile.drawText(125, 150, "VALUE", BLACK);
 
 //	//	Probably will disable this for this rev.
 //	SimbleeForMobile.drawText(25, 200, "(NOT IMPLEMENTED) Vacuum:", BLACK);
 //	vacuumSwitch = SimbleeForMobile.drawSwitch(100, 230);
 
-	saveButton = SimbleeForMobile.drawButton(50, 250, 75, "Save to Device");
-	saveButtonConfirmState = SimbleeForMobile.drawText(50, 250, "SUBMIT BTN FDBK", BLUE, 20);
+	saveButton = SimbleeForMobile.drawButton(75, 300, 200, "Save to Device");
+	saveButtonConfirmState = SimbleeForMobile.drawText(75, 250, "READY", BLUE, 20);
+
+    SimbleeForMobile.setEvents(saveButton, EVENT_RELEASE);
 
 	SimbleeForMobile.endScreen();
 
 	update();
 }
 
-void ui_event(event_t &event)
-{
-//	handleTextFieldEvents(event);
-//	handleButtonScreenEvents(event);
-}
 
 void handleTextFieldEvents(event_t &event)
 {
   if(event.id == brewTimeField) {
-		tempBrewTimeLimit = event.value;
+//        Serial.println(event.value);
+        tempBrewTimeLimit = event.value;
   } 
 }
 
 void handleButtonScreenEvents(event_t &event)
 {
   if(event.id == saveButton && event.type == EVENT_RELEASE) {
-		updateSaveButtonConfirmLabel();
+//        buttonTest = true; 
+        updateSaveButtonConfirmLabel();
   } 
 }
+
+void ui_event(event_t &event)
+{
+	handleTextFieldEvents(event);
+	handleButtonScreenEvents(event);
+}
+
 
 //	This will be a helper in code refactoring later to simplying some code blocks.
 //void saveToDevice() {
