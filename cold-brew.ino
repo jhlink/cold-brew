@@ -168,6 +168,8 @@ void resetSaveButtonConfirmLabel() {
     // Providing update to what the value of the Pressure is in kPa
     //  SimbleForMobile.updateValue(convertVoltageToPressure(analogRead(PRS_SEN)));
     SimbleeForMobile.updateText(saveButtonConfirmState, "READY");
+  	SimbleeForMobile.updateValue(brewTimeField, setTimeLimit / 1000);
+  	SimbleeForMobile.updateValue(drainTimeField, drainTimeout / 1000);
 }
 
 void ignoreSaveButtonConfirmLabel() {
@@ -180,18 +182,15 @@ void setPixelRingColor(CRGB val) {
 	for (int i = 0; i < NUM_OF_PIX; i++) {
 		ledStat[i] = val;
 	}
-	FastLED.show();
-}   
+}
 
-void addGlitter( fract8 chanceOfGlitter) 
-{
+void addGlitter( fract8 chanceOfGlitter) {
   if( random8() < chanceOfGlitter) {
     ledStat[ random16(NUM_OF_PIX) ] += CRGB::White;
   }
 }
 
-void bpm()
-{
+void bpm() {
   // colored stripes pulsing at a defined Beats-Per-Minute (BPM)
   uint8_t BeatsPerMinute = 80;
   CRGBPalette16 palette = PartyColors_p;
@@ -443,7 +442,7 @@ void drainUpdate() {
 	unsigned long currentTime = millis();
 	if ((currentTime - stateStartTime) >  drainTimeout) {
 		closeArmIntoClosedLidState();
-        resetSaveButtonConfirmLabel();
+    resetSaveButtonConfirmLabel();
 		stateMachine.transitionTo(idle_state);
 	}
 
@@ -459,25 +458,37 @@ void update() {
 
   char buf[16];
 
-    static unsigned long stateStartTime = millis();
-    //  Creates staggers write to app.
-    if ((millis() - stateStartTime) > 250) {
-      float pressureValue = convertVoltageToPressure(analogRead(PRS_SEN));
-      sprintf(buf, "%.02f", pressureValue);
-      stateStartTime = millis();
-      SimbleeForMobile.updateText(pressureDataLabel, buf);
-    }
+  static unsigned long stateStartTime = millis();
+  //  Creates staggers write to app.
+  if ((millis() - stateStartTime) > 250) {
+    float pressureValue = convertVoltageToPressure(analogRead(PRS_SEN));
+    sprintf(buf, "%.02f", pressureValue);
+    stateStartTime = millis();
+    SimbleeForMobile.updateText(pressureDataLabel, buf);
+  }
 
 
   //  Need to provide similar update for brew time.
   if (!stateMachine.isInState(idle_state)) {
-      memset(buf, 0, sizeof(buf));
-//      sprintf(buf, "%d min.", setTimeLimit);
-      SimbleeForMobile.updateValue(brewTimeField, setTimeLimit / 1000);
 
-      memset(buf, 0, sizeof(buf));
+    if ((millis() - stateStartTime) > 250) {
 //      sprintf(buf, "%d min.", setTimeLimit);
-      SimbleeForMobile.updateValue(drainTimeField, drainTimeout / 1000);
+			if (stateMachine.isInState(vacu_state) || stateMachine.isInState(dwll_state)) {
+      	memset(buf, 0, sizeof(buf));
+				uint8_t secondsPassed = (millis() - startTime) / 1000;
+				uint8_t resultTime = setTimeLimit - secondsPassed;
+				uint8_t decrementingTime = resultTime > 0 ? resultTime : 0;
+      	SimbleeForMobile.updateValue(brewTimeField, decrementingTime);
+			}
+
+			if (stateMachine.isInState(drin_state)) {
+      	memset(buf, 0, sizeof(buf));
+				uint8_t secondsPassed = (millis() - stateStartTime) / 1000;
+				uint8_t resultTime = drainTimeout - secondsPassed;
+				uint8_t decrementingTime = resultTime > 0 ? resultTime : 0;
+      	SimbleeForMobile.updateValue(drainTimeField, decrementingTime);
+			}
+		}
 
 	  SimbleeForMobile.updateValue(vacuumSwitch, (int) vacuumState);
 
@@ -628,10 +639,6 @@ void updateSaveButtonConfirmLabel() {
     
     Serial.print("Party Switch value: ");
     Serial.println(partyMode);
-
-    
-    
-
         
     SimbleeForMobile.updateValue(vacuumSwitch, (int) vacuumState);
     SimbleeForMobile.updateValue(partySwitch, (int) partyMode);
