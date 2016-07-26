@@ -13,6 +13,7 @@ asm(".global _printf_float");
 #define VACU_PUMP	13
 #define TACT_TCH     5
 #define NEOPIX  6
+#define FRAMES_PER_SECOND  100
 
 //  CAM micro switch end stops
 //	When switch is hit/pressed, returns 3v3 HIGH
@@ -30,8 +31,6 @@ asm(".global _printf_float");
 
 // Pressure switch transfer function
 //		Vout = Vs x (0.018 x P + .92)
-//		Converted formula is found at convertVoltageToPressure()
-#define PRS_SEN	2
 
 #define NUM_OF_PIX 12
 
@@ -46,12 +45,14 @@ extern void vacuumUpdate();
 extern void dwellUpdate();
 extern void drainUpdate();
 
-////	Define the states within the SM
+//// Define the states within the SM
 
 const unsigned long TIME_FOR_MTR_TO_OPEN_LID = 210;
 const unsigned long PULSE_TIME = 10;
 const unsigned long DISSIPATE_TIME = 100;
 
+//		Converted formula is found at convertVoltageToPressure()
+#define PRS_SEN	2
 // Idle state
 State idle_state = State(idled);			
 
@@ -102,6 +103,7 @@ uint8_t	pressureDataLabel;
 uint8_t brewTimeField;
 uint8_t drainTimeField;
 uint8_t vacuumSwitch;
+uint8_t partySwitch;
 uint8_t saveButton;
 uint8_t saveButtonConfirmState;
 
@@ -118,6 +120,9 @@ unsigned long tempDrainTimeLimit = drainTimeout / 1000;
 uint8_t vacuumEnabled = 1;
 
 CRGB ledStat[NUM_OF_PIX];
+uint8_t gHue = 0;
+bool partyMode = false;
+uint8_t tempPartyMode = 0;
 
 /*************************** COLOR FOR MODES  ***************************/
 CRGB::HTMLColorCode idleLEDColor = CRGB::Green;          // Green
@@ -147,7 +152,7 @@ void setup() {
 	FastLED.addLeds<NEOPIXEL, NEOPIX>(ledStat, NUM_OF_PIX);
 	FastLED.setBrightness(150);
 
-	SimbleeForMobile.advertisementData = "prismav2";
+	SimbleeForMobile.advertisementData = "prismav3";
 
 	SimbleeForMobile.domain = "prisma.firstbuild.com";
 
@@ -178,6 +183,24 @@ void setPixelRingColor(CRGB val) {
 	FastLED.show();
 }   
 
+void addGlitter( fract8 chanceOfGlitter) 
+{
+  if( random8() < chanceOfGlitter) {
+    ledStat[ random16(NUM_OF_PIX) ] += CRGB::White;
+  }
+}
+
+void bpm()
+{
+  // colored stripes pulsing at a defined Beats-Per-Minute (BPM)
+  uint8_t BeatsPerMinute = 80;
+  CRGBPalette16 palette = PartyColors_p;
+  uint8_t beat = beatsin8( BeatsPerMinute, 64, 255);
+  for( int i = 0; i < NUM_OF_PIX; i++) { //9948
+    ledStat[i] = ColorFromPalette(palette, gHue+(i*2), beat-gHue+(i*10));
+  }
+}
+
 void stopDrainMotor() { 
 	analogWrite(HBRIDGE_A, 0);
 	analogWrite(HBRIDGE_B, 0);
@@ -187,7 +210,6 @@ void moveForwardDrainMotorSpeed(int speed) {
 	analogWrite(HBRIDGE_A, speed);
 	analogWrite(HBRIDGE_B, 0);
 }
-
 
 void moveReverseDrainMotorSpeed(int speed) {
 	analogWrite(HBRIDGE_A, 0);
@@ -307,8 +329,13 @@ void idled() {
 	//	Due to H-Bridge, separating out motor functions for simplicity.
 	//	digitalWrite(DRAIN_MTR, LOW);
 	stopDrainMotor();
-
-	setPixelRingColor(idleLEDColor);
+ 
+    if (partyMode) {
+      bpm();
+      addGlitter(80);
+    } else {
+      setPixelRingColor(idleLEDColor);
+    }
 }
 
 //	The pump valve opens, then the pump turns on. Atm valve is ensured
@@ -383,7 +410,7 @@ void dwellUpdate() {
 	//		Ensures timer has priority over pressure.
 	unsigned long currentTime = millis();
 	float pressure_in_kpa = convertVoltageToPressure(analogRead(PRS_SEN));
-	if ((currentTime- startTime) > setTimeLimit) {
+	if ((currentTime - startTime) > setTimeLimit) {
 		stateStartTime = currentTime;
 
 		//	Ensure that next button press in DRAIN state will lead to IDLE
@@ -452,7 +479,10 @@ void update() {
 //      sprintf(buf, "%d min.", setTimeLimit);
       SimbleeForMobile.updateValue(drainTimeField, drainTimeout / 1000);
 
-	  SimbleeForMobile.updateValue(vacuumSwitch, vacuumState);
+	  SimbleeForMobile.updateValue(vacuumSwitch, (int) vacuumState);
+
+    SimbleeForMobile.updateValue(partySwitch, (int) partyMode);
+    
   }
 }
 
@@ -496,13 +526,6 @@ void loop() {
 						break;
 
 					case VACU:
-						if (!vacuumState)	{
-							buttonPresses = 2;
-							Serial.println("VACUUM DISABLED -- MOVING TO DWELL");
-							stateMachine.transitionTo(dwll_state);
-						}
-
-						Serial.println("VACU");
 
 						closeArmIntoClosedLidState();
 						ignoreSaveButtonConfirmLabel();
@@ -513,6 +536,15 @@ void loop() {
 
 						//  Ensure next button press will lead to DRAIN state.
 						buttonPresses = 2; 
+           
+             if (!vacuumState) {
+                Serial.println("VACUUM DISABLED -- MOVING TO DWELL");
+                stateMachine.immediateTransitionTo(dwll_state);
+                break;
+              }
+           
+           
+            Serial.println("VACU");
 
 						stateMachine.transitionTo(vacu_state);
 						break;
@@ -563,6 +595,12 @@ void loop() {
 	}
 
 	SimbleeForMobile.process();
+
+  if (stateMachine.isInState(idle_state) && partyMode) {
+    FastLED.show();
+    FastLED.delay(1000/FRAMES_PER_SECOND); 
+    EVERY_N_MILLISECONDS( 20 ) { gHue++; }
+  }
 }
 
 void updateSaveButtonConfirmLabel() {
@@ -573,24 +611,32 @@ void updateSaveButtonConfirmLabel() {
 		buttonTest = false;
      
 		setTimeLimit = tempBrewTimeLimit * 1000;
-        brewTimeoutSec = setTimeLimit / 1000;
+    brewTimeoutSec = setTimeLimit / 1000;
 		Serial.print("This is brew time ");
 		Serial.println(brewTimeoutSec);
 
 		drainTimeout = tempDrainTimeLimit * 1000;
-        drainTimeoutSec = drainTimeout / 1000;
+    drainTimeoutSec = drainTimeout / 1000;
 		Serial.print("This is drain time ");
 		Serial.println(drainTimeoutSec);
 
 		vacuumState = vacuumEnabled;
+    partyMode = tempPartyMode;
 
-        Serial.print("Switch value: ");
-        Serial.println(vacuumState);
+    Serial.print("Vaccum Switch value: ");
+    Serial.println(vacuumState);
+    
+    Serial.print("Party Switch value: ");
+    Serial.println(partyMode);
+
+    
+    
 
         
-        SimbleeForMobile.updateValue(vacuumSwitch, vacuumState);
-        SimbleeForMobile.updateValue(brewTimeField, brewTimeoutSec);
-        SimbleeForMobile.updateValue(drainTimeField, drainTimeoutSec);
+    SimbleeForMobile.updateValue(vacuumSwitch, (int) vacuumState);
+    SimbleeForMobile.updateValue(partySwitch, (int) partyMode);
+    SimbleeForMobile.updateValue(brewTimeField, brewTimeoutSec);
+    SimbleeForMobile.updateValue(drainTimeField, drainTimeoutSec);
 
 		SimbleeForMobile.updateText(saveButtonConfirmState, "SAVED TO MEMORY");
 	} else {
@@ -612,19 +658,24 @@ void ui() {
 	SimbleeForMobile.drawText(25, 150, "Pressure:", BLACK);
 	pressureDataLabel = SimbleeForMobile.drawText(125, 150, "VALUE", BLACK);
 
-	//	Probably will disable this for this rev.
 	SimbleeForMobile.drawText(25, 200, "Vacuum:", BLACK);
 	vacuumSwitch = SimbleeForMobile.drawSwitch(125, 195);
+ 
+  SimbleeForMobile.drawText(25, 400, "Caffeine Party?:", WHITE);
+  partySwitch = SimbleeForMobile.drawSwitch(175, 395);
 
 	saveButton = SimbleeForMobile.drawButton(75, 300, 200, "Save to Device");
 	saveButtonConfirmState = SimbleeForMobile.drawText(75, 250, "READY", BLUE, 20);
 
 	SimbleeForMobile.setEvents(saveButton, EVENT_RELEASE);
 
-    // Initalize initial screen with default machine values.
-    SimbleeForMobile.updateValue(vacuumSwitch, vacuumState);
-    SimbleeForMobile.updateValue(brewTimeField, setTimeLimit / 1000);
-    SimbleeForMobile.updateValue(drainTimeField, drainTimeout / 1000);
+  // Initalize initial screen with default machine values.
+  SimbleeForMobile.updateValue(vacuumSwitch, vacuumState);
+  SimbleeForMobile.updateValue(partySwitch, partyMode);
+  SimbleeForMobile.updateValue(brewTimeField, setTimeLimit / 1000);
+  SimbleeForMobile.updateValue(drainTimeField, drainTimeout / 1000);
+
+//  SimbleeForMobile.setVisible(partySwitch, false);
 
 	SimbleeForMobile.endScreen();
 
@@ -638,7 +689,9 @@ void handleSwitchEvents(event_t &event)
         Serial.println(event.value);
 #endif
         vacuumEnabled = event.value;
-  } 
+  } else if (event.id == partySwitch) {
+      tempPartyMode = event.value;
+  }
 }
 
 void handleTextFieldEvents(event_t &event)
