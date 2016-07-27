@@ -182,6 +182,7 @@ void setPixelRingColor(CRGB val) {
 	for (int i = 0; i < NUM_OF_PIX; i++) {
 		ledStat[i] = val;
 	}
+	FastLED.show();
 }
 
 void addGlitter( fract8 chanceOfGlitter) {
@@ -387,6 +388,11 @@ void vacuumUpdate() {
 
 		stateMachine.immediateTransitionTo(dwll_state);
 	}
+
+	if (SimbleeForMobile.updatable) {
+		update();
+	}
+
 }
 
 //	Pump is first turned off, then the valve pump is turned off. 
@@ -425,6 +431,10 @@ void dwellUpdate() {
 		stateStartTime = currentTime;
 		stateMachine.immediateTransitionTo(vacu_state);
 	}
+
+	if (SimbleeForMobile.updatable) {
+		update();
+	}
 } 
 
 //	Pump is turned off first, then the pump valve closes. The atm valve
@@ -450,6 +460,11 @@ void drainUpdate() {
 	if ((currentTime - stateStartTime) > repressurizeTime) {
 		moveArmIntoDrainOpenState();
 	}
+
+	if (SimbleeForMobile.updatable) {
+		update();
+	}
+
 }
 
 void update() {
@@ -475,16 +490,16 @@ void update() {
 //      sprintf(buf, "%d min.", setTimeLimit);
 			if (stateMachine.isInState(vacu_state) || stateMachine.isInState(dwll_state)) {
       	memset(buf, 0, sizeof(buf));
-				uint8_t secondsPassed = (millis() - startTime) / 1000;
-				uint8_t resultTime = setTimeLimit - secondsPassed;
+				unsigned long milliSecPassed = millis() - startTime;
+				uint8_t resultTime = (setTimeLimit - milliSecPassed) / 1000;
 				uint8_t decrementingTime = resultTime > 0 ? resultTime : 0;
       	SimbleeForMobile.updateValue(brewTimeField, decrementingTime);
 			}
 
 			if (stateMachine.isInState(drin_state)) {
       	memset(buf, 0, sizeof(buf));
-				uint8_t secondsPassed = (millis() - stateStartTime) / 1000;
-				uint8_t resultTime = drainTimeout - secondsPassed;
+				unsigned long milliSecPassed = millis() - stateStartTime;
+				uint8_t resultTime = (drainTimeout - milliSecPassed) / 1000;
 				uint8_t decrementingTime = resultTime > 0 ? resultTime : 0;
       	SimbleeForMobile.updateValue(drainTimeField, decrementingTime);
 			}
